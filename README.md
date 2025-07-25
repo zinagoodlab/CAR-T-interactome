@@ -38,11 +38,11 @@ _ Single-cell data: 31,808 high-quality cells from on-treatment tumor biopsies
 **Citation**
 If you use this code or data, please cite:  
 @article{mo2025ccl8ccl13,  
-    title={CCL8⁺CCL13⁺ tumor-associated macrophages drive early resistance to CAR T cell therapy in large B cell lymphoma},  
-    author={Mo, Kelvin C and Yeh, Christine Yiwen and Kramer, Anne Marijn and others},  
-    journal={Cancer Cell},  
-    year={2025},  
-    publisher={Elsevier}  
+>title={CCL8⁺CCL13⁺ tumor-associated macrophages drive early resistance to CAR T cell therapy in large B cell lymphoma},  
+>author={Mo, Kelvin C and Yeh, Christine Yiwen and Kramer, Anne Marijn and others},  
+>journal={Cancer Cell},  
+>year={2025},  
+>publisher={Elsevier}  
 }  
   
 **Contact**
