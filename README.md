@@ -1,12 +1,12 @@
 # CAR-T-interactome
 Single-cell interactome analysis reveals CCL8⁺CCL13⁺ tumor-associated macrophages as drivers of CAR T cell resistance in large B cell lymphoma. This repository contains computational pipelines for identifying resistance mechanisms through on-treatment single-cell profiling and cross-cohort validation.
 
-<div align="center"><img width="2622" height="2390" alt="Graphical Abstract" src="https://github.com/user-attachments/assets/0e5f8792-15d7-4e84-8482-f91181429850" />
+<img width="2622" height="2390" alt="Graphical Abstract" src="https://github.com/user-attachments/assets/0e5f8792-15d7-4e84-8482-f91181429850" />
   
   
 We performed the first on-treatment single-cell characterization of the tumor microenvironment following CAR T cell therapy in large B cell lymphoma (LBCL). Through comprehensive single-cell multi-omic profiling and interactome analysis, we identified CCL8⁺CCL13⁺ tumor-associated macrophages (TAMs) as key mediators of CAR T resistance.
 
-<div align="center"><img width="3106" height="1125" alt="image" src="https://github.com/user-attachments/assets/8e1e1470-75ba-43e1-ba87-81d72581fb24" />
+<img width="3106" height="1125" alt="image" src="https://github.com/user-attachments/assets/8e1e1470-75ba-43e1-ba87-81d72581fb24" />
 
 **Key Findings**
 - CCL8⁺CCL13⁺ TAMs are highly proliferative and immunosuppressive, predicting poor outcomes across multiple treatment contexts
