@@ -1,0 +1,201 @@
+---
+title: "Celltype_Assignments_MixReference2.0_Tregs"
+author: "Kelvin Mo"
+date: "2024-02-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+devtools::install_github('satijalab/seurat')
+devtools::install_github('satijalab/azimuth')
+BiocManager::install("SingleR")
+BiocManager::install("celldex")
+library(Azimuth)
+library(celldex)
+library(SingleR)
+BiocManager::install("SingleCellExperiment")
+library(SingleCellExperiment)
+install.packages("tidyverse")
+library(tidyverse)
+install.packages("factoextra")
+library(factoextra)
+install.packages("cluster")
+library(cluster)
+install.packages("survival")
+library(survival)
+install.packages("survminer")
+library(survminer)
+install.packages("ggsurv")
+library(GGally)  # ggplot2 survival plots
+library(dplyr)
+library(gridExtra)
+```
+
+
+## Monaco Immune Data Reference = bulk RNA-seq samples of sorted immune cell populations
+```{r}
+# Bulk RNA-seq samples of sorted immune cell populations
+MI <- MonacoImmuneData()
+MI <- celldex::MonacoImmuneData()
+df_MI <- readRDS("../DLBCL_big_final.rds")
+sce <- as.SingleCellExperiment(df_MI)
+results <- SingleR(test=sce, ref=MI, assay.type.test=1, labels = MI$label.main)#label.fine
+df_MI$predicted_celltype_MI <- results$labels
+table(results$labels)
+```
+
+
+```{r}
+results_Treg <- SingleR(test=sce, ref=MI, assay.type.test=1, labels=MI$label.fine)
+df_MI$predicted_subtype_MI <- results_Treg$labels
+table(results_Treg$labels)
+```
+
+```{r}
+tregs <- subset(df_MI, subset = predicted_subtype_MI == "T regulatory cells")
+dim(tregs@meta.data)
+head(tregs)
+```
+
+
+```{r}
+# Identify the cells with both "CD4+" and "CD8+" as their cell type
+t_cells <- df_MI$predicted_celltype_MI == "CD4+ T cells" | df_MI$predicted_celltype_MI == "CD8+ T cells"
+# Update the celltype values to "T cells" for the identified cells
+df_MI$predicted_celltype_MI[t_cells] <- "T cells"
+# Identify the cells with both "NK cells" and "Progenitors" as their cell type
+nk_cells <- df_MI$predicted_celltype_MI == "NK cells" | df_MI$predicted_celltype_MI == "Progenitors"
+# Update the celltype values to "NK cells" for the identified cells
+df_MI$predicted_celltype_MI[nk_cells] <- "NK cells"
+```
+
+
+```{r}
+# Split the "Dendritic cells" category down into "pDC", "cDC1", and "cDC2"
+df_MI$predicted_celltype_MI[pdc_idents] <- "pDC"
+df_MI$predicted_celltype_MI[cdc1_idents] <- "cDC1"
+df_MI$predicted_celltype_MI[cdc2_idents] <- "cDC2"
+```
+
+
+```{r}
+# Identify the cells with both "CD4+" and "CD8+" as their cell type
+mix_cells <- df_MI$predicted_celltype_MI == "Monocytes" | df_MI$predicted_celltype_MI == "cDC2"
+df_MI$predicted_celltype_MI[mix_cells] <- "Monocytes/cDC2"
+umap <- DimPlot(df_MI, group.by = "predicted_celltype_MI", reduction = "umap", label = FALSE, label.size=2) + ggtitle("Monaco Immune Data")
+```
+
+
+```{r}
+# Getting rid of the pDC datapoints outside of the cluster
+df_MI$predicted_celltype_MI[which(df_MI$predicted_celltype_MI == "pDC" & umap$UMAP_1 < 9 & umap$UMAP_2 > -10)] <- "B cells"
+df_MI$predicted_celltype_MI[which(df_MI$predicted_celltype_MI == "pDC" & umap$UMAP_1 < 0 & umap$UMAP_2 < -10)] <- "Monocytes/cDC2"
+
+dendritic <- df_MI$predicted_celltype_MI == "Dendritic cells"
+df_MI$predicted_celltype_MI[dendritic] <- "Monocytes/cDC2"
+
+mix_cells <- df_MI$predicted_celltype_MI == "Monocytes/cDC2" | df_MI$predicted_celltype_MI == "cDC1"
+df_MI$predicted_celltype_MI[mix_cells] <- "Monocytes/cDC"
+```
+
+
+```{r}
+my_colors <- c("T cells" = "#8C1515", "B cells" = "#D9C393", "pDC" = "red", "NK cells" = "yellow", "Monocytes/cDC" = "orange")
+DimPlot(df_MI, group.by = "predicted_celltype_MI", reduction = "umap", label = FALSE, label.size=2, cols=my_colors) + ggtitle("Cell Type Annotation")
+```
+
+
+```{r}
+DimPlot(df_MI, group.by = "predicted_celltype_MI", reduction = "umap", label = FALSE, label.size=2, split.by = "predicted_celltype_MI") + ggtitle("Monaco Immune Data")
+```
+
+
+```{r}
+df_MI$predicted_celltype_MI[which(df_MI$predicted_subtype_MI == "T regulatory cells")] <- "Tregs"
+```
+
+
+```{r}
+my_colors <- c("T cells" = "#8C1515", "B cells" = "#D9C393", "pDC" = "red", "NK cells" = "yellow", "Monocytes/cDC" = "orange", "Tregs" = "black")
+DimPlot(df_MI, group.by = "predicted_celltype_MI", reduction = "umap", label = FALSE, label.size=2, cols=my_colors) + ggtitle("Cell Type Annotation")
+```
+
+```{r}
+saveRDS(df_MI,"LymphomaEcotyper_scRNAseq_Tregs.rds")
+```
+
+
+
+```{r}
+# Define a function to prepare 10X HNSCC atlas data and write a matrix for CIBERSORTx.
+write_cibersortx_mx <- function(rna, lm22, metadata, metatype = "cell_type",
+																metasubtype = NULL, codex_full = NULL, split_niche = FALSE) {
+	# 1. Prepare signatures from LM22 microarray data for CIBERSORTx.
+	genes <- sort(rownames(rna))
+
+	# 2. Prepare 10X DLBCL atlas scRNA-seq data for CIBERSORTx.
+	cibersortx <- rna[genes, ]
+  metadata <- metadata[, c("seurat_clusters", metatype)]
+	colnames(metadata)[2] <- "metatype"
+	metadata$seurat_clusters <- as.vector(metadata$seurat_clusters)
+	metadata$metatype <- as.vector(metadata$metatype)
+
+
+	# Create a vector of sampled cell IDs (max size of all files in CIBERSORTx is 1 GB).
+  all_ids <- c()
+	for (cell_class in unique(metadata$metatype)) {
+		sampled_ids <- which(metadata$metatype == cell_class)
+		if (length(sampled_ids) > 1000) sampled_ids <- sample(sampled_ids, size = 1000, replace = FALSE)
+		all_ids <- c(all_ids, sampled_ids)
+	}
+
+	# Correct cell frequencies.
+	cibersortx <- cibersortx[, all_ids]
+	metadata <- metadata[all_ids, ]
+
+	## Write final matrix.
+	metadata <- t(metadata)
+	colnames(cibersortx) <- metadata[2, ]
+	names(dimnames(cibersortx)) <- c("GeneSymbol", "")
+	
+	write.table(cibersortx, file = "scRNAseq-for-CIBERSORTx-predicted_celltype_MixReference2.0_Tregs.txt", sep = "\t", quote = FALSE, row.names = TRUE, col.names = NA)
+	
+}
+
+
+
+########################## Process Data ########################################
+# Prepare 10X DLBCL atlas scRNA-seqq data with neutrophil gene expression signature
+# from LM22 microarray data for CIBERSORTX
+DLBCL_atlas <- df_MI
+## Import CIBERSORT neutrophil gene expression signature from LM22 matrix.
+lm22 <- as.matrix(read.delim("../LM22_source_GEPs.txt", row.names = 1))
+
+## Prepare 10X HNSCC atlas data for CIBERSORTx.
+DefaultAssay(DLBCL_atlas) <- "SCT"
+rna <- GetAssayData(DLBCL_atlas, assay = "SCT", layer = "data")
+rna[which(rna < 0)] <- 0
+
+## Add neutrophil gene expression signature and write data for CIBERSORTx
+## separated by cell type or REMI cluster.
+write_cibersortx_mx(rna, lm22, metadata = DLBCL_atlas@meta.data, metatype = "predicted_celltype_MI")
+```
+
+```{r}
+head(df_MI)
+DimPlot(df_MI, group.by = "predicted_subtype_MI", reduction = "umap", label = FALSE, label.size=2, cols=my_colors) + ggtitle("Cell Type Annotation")
+```
+
+```{r}
+head(df, 50)
+dim(df)
+```
+
+
+
+

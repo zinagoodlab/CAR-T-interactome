@@ -1,0 +1,2563 @@
+---
+title: "Celltype_Assignments_MixReference2.0"
+author: "Kelvin Mo"
+date: "2023-06-25"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+devtools::install_github('satijalab/seurat')
+devtools::install_github('satijalab/azimuth')
+BiocManager::install("SingleR")
+BiocManager::install("celldex")
+library(Azimuth)
+library(celldex)
+library(SingleR)
+BiocManager::install("SingleCellExperiment")
+library(SingleCellExperiment)
+install.packages("tidyverse")
+library(tidyverse)
+install.packages("factoextra")
+library(factoextra)
+install.packages("cluster")
+library(cluster)
+install.packages("survival")
+library(survival)
+install.packages("survminer")
+library(survminer)
+install.packages("ggsurv")
+library(GGally)  # ggplot2 survival plots
+library(dplyr)
+library(gridExtra)
+```
+
+```{r}
+# 2. Define cell type markers.
+t_genes <- c("PDCD1", "LAG3", "CD101", "CD244", "BTLA", "HAVCR2", "ENTPD1", "NT5E", "ITGAE", "TNFRSF18", "VSIR",  # Exhaustion markers / inhibitory receptors
+						 # PDCD1 = PD1, CD244 = 2B4, BTLA = CD272, HAVCR2 = TIM3, ENTPD1 = CD39, NT5E = CD73, ITGAE = CD103, TNFRSF18 = CD357 (GITR)
+						 "TBX21", "GATA3", "BCL6", "RORC", "MAF", "AHR",
+						 # Th subsets: Th1 (T-bet), Th2 (GATA3), Tfh (BCL6), Th17 (RORgt); MAF in Tfh and maybe others
+						 "SELL", "CCR7", "IL7R", "LTB", "IL2RB", "CXCR3",  # Naive/memory markers
+						 # SELL = CD62L, IL7R = IL7Ra, CXCR3 = CD183
+						 "LEF1", "TCF7", "KLF2", "P2RX7", "FOXO1",  # Naive/memory TFs
+						 "CD58", "CD2", "CD7", "CD27", "CD28", "TNFRSF4", "TNFRSF9", "TNFRSF14", "ICOS", "CD226", "TNFRSF8", "HAVCR1", "PVR", "CD40LG",  # Activating receptors
+						 # TNFRSF4 = CD134, TNFRSF9 = CD137, ICOS = CD278, TNFRSF14 = CD270 (HVEM; binds BTLA or CD160 - inhibitory and LIGHT - activating)
+						 # CD226 = DNAM1, PVR = CD155 (binds TIGIT - inhibitory and DNAM/CD226 - activating)
+						 # TNFRSF8 = CD30, HAVCR1 = CD365 (TIM1), VSIR = B7-H5 (VISTA), CD40LG = CD40L (CD154)
+						 "FAS", "GNLY", "GZMA", "GZMB", "GZMH", "GZMK", "LAMP1", "PRF1", "SRGN", "NKG7", "CST7", "CTSW", "CX3CR1",
+						 # Effector markers; GZMK in Tem; CX3CR1 marks good Teff in mice
+						 # FAS = CD95
+						 "EOMES", "TBX21", "PRDM1", "ZEB2", "HOPX", "FLI1", "BAFT", "IRF4", "ID2",  # Effector TFs
+						 # TBX21 = T-bet, PRDM1 = BLIMP1
+						 "IL2RA", "CD38", "CD44", "CD69",  # Activation markers
+						 "CTLA4", "TIGIT", "FOXP3", "IKZF2", "NRP1", "RTKN2", "ARG1", "TGFB1", "TGFB2", "TGFB3", "ADORA2A", "ADORA2B", "CCR4", "CCR8",
+						 # Treg markers; ARG1 is generally suppressive
+						 # NRP1 = CD304 (very suppressive Treg, nTreg), IKZF2 = Helios (nTreg)
+						 "IFNG", "IL2", "IL4", "IL5", "IL10", "IL13", "IL17A", "IL17F", "IL21", "TNF",  "CSF2", "CCL5", "CXCL10", "METRNL",  # Cytokines (Th1: IFNg and CSF2 = GM-SCF; Th2: IL4, IL5, IL13; Th17: IL17A, IL17F; Tfh: IL21)
+						 "B3GAT1", "KLRG1", "USP16", "GLB1", "CDKN1A", "CDKN2A",  # Senescence - CD57, KLRG1 (and low CD27, CD28); USP16 (Dorian), beta-galactosidase; P21 (CDKN1A) and P16 (CDKN2A)             "MKI67", "MYC", "MYCL", "MYCN",  # Proliferation - Ki-67, Myc
+						 "NCAM1", "FCGR3A", "KLRB1", "KLRC1", "KLRC2", "KLRC3", "KLRD1", "KIR2DL1", "KIR2DL4", "KIR3DL1",  # NK markers
+						 "BATF", "BATF3", "IRF1", "IRF2", "IRF3", "IRF4", "IRF8", "JUND", "JUNB", "JUN", "FOS", "FOSB", "FOSL1", "FOSL2", "BACH1", "BACH2", "ATF1",  "ATF2", "ATF3", "ATF4", "ATF5", "ATF6", "ATF7",  # AP1 TFs
+						 "TERT", "TERC", "DKC1",  # Telomerase genes
+						 "MKI67", "MYC", "MYCL", "MYCN",  "ACC1",  # Proliferation - Ki-67, Myc, LINC from Elena
+						 "SLC2A1", "SLC2A2", "SLC2A3", "SLC2A4", "SLC2A5", "SLC2A14", "SLC1A5", "SLC38A1", "SLC38A2", "GLS", "HK2", "CD36", "ASS1", "SLC7A1", "SLC7A2", "CPT1A",
+						 # Metabolism: GLUT1, GLUT3, GLUT14 (GLUT3 paralog); also GLUT2/4/5 for completeness
+						 "TRAC", "TRBC1", "TRBC2", "TRGC1", "TRGC2", "TRDC",  # TCR gd vs. ab
+						 "CD3E", "CD3D", "CD3G", "CD247", "CD5", "CD4", "CD8A", "CD8B", "PTPRC", "CD52")  # T-cell markers
+# T-cell markers, CD4 vs. CD8 subsets; PTPRC = CD45, CD247 = CD3z
+b_genes <- c("MME", "CD19", "MS4A1", "CR2", "CD22", "CD24", "CD40", "CD79A", "CD79B", "PAX5")
+# MME = CD10, CR2 = CD21, MS4A1 = CD20
+plasma_genes <- c("IGKC", "IGLC1", "IGLC2", "IGLC3", "IGHM", "IGHD", "IGHG1", "IGHG2", "IGHG3", "IGHG4",
+									"IGHA1", "IGHA2", "JCHAIN", "SDC1", "CD38", "PRDM1", "TNFRSF13B", "TNFRSF17", "TNFRSF13C",
+									"HLA-DRA", "HLA-DRB1", "HLA-DRB3", "HLA-DRB4", "HLA-DRB5")
+#  TNFRSF13B = CD267 (TACI), TNFRSF17 = BCMA (CD269), TNFRSF13C = BAFFR (CD268), SDC1 = CD138
+hpsc_genes <- c("HLF", "PROCR", "THY1", "CD34")  # 	PROCR encodes CD201/EPCR, THY1 encodes CD90
+mye_genes <- c("CSF1R", "CD33", "ADGRE1", "CD14", "CD68", "LYZ", "CD274", "CD163", "CD80", "CD86", "ITGAM", "CX3CR1", "WNT5A", "LYVE1")
+# ADGRE1 = F4/80 (EMR1) on macrophages; CX3CR1 binds CX3CL1 (fractalkine), ITGAM = CD11b, WNT5A secreted by MDSCs, CD163 is a TAM marker
+nk_genes <- c("NCAM1", "NKG7", "MME", "GZMB", "FCGR3A", "KLRC1", "KLRC2", "KLRC3", "KLRD1", "KLRG1", "KIR2DL1", "KIR3DL1")
+# NCAM1 = CD56, FCGR3A = CD16, B3GAT1 = enzyme making CD57, KLRC1 = CD159 (NKG2)
+# fib_genes <- c("PDGFRA", "PDGFRB", "PDPN", "FAP", "GFPT2", "ACTA2", "GPC6", "MME", "S100A4", "VIM")
+# ACTA2 = aSMA, S100A4 = FSP1,
+# end_genes <- c("ENG", "VWF", "NOS3", "PECAM1", "ACKR1", "CD93")
+#  PECAM1 = CD31, ACKR1 = DARC
+# ang_genes <- c("VEGFA", "VEGFB", "VEGFC", "VEGFD", "PGF", "FLT1", "KDR", "FLT4")
+#  FLT1 = VEGFR1, KDR = VEGFR2, FLT4 = VEGFR3
+# epi_genes <- c("EPCAM",  "CD276", "KRT6C", "KRT16", "KRT23", "KRT85")
+# plat_genes <- c("PPBP", "ITGB3", "ITGA2B", "SPN", "GP1BA") # ITGB3 = CD61, ITGA2B = CD41, SPN = CD43
+# rbc_genes <- c("GYPA")  # CD235a
+# mast_genes <- c("CPA3", "KIT", "HDC", "MS4A2", "LTC4S")  # MS4A2 = FCER1B
+pDC_genes <- c("IL3RA", "CD4", "CD74", "CLEC4C", "TLR7", "TLR9", "NRP1", "IRF4", "IRF8", "ZEB2", "ID2", "KLF4", "IKZF1", "BATF3")
+# neu_genes <- c("ITGAM", "FCGR3B", "FCGR2B", "CD33", "CD44", "CEACAM8", "ITGB2", "MPO", "KIT", "CD38", "S100A8", "S100A9", "LYZ", "AIF1", "IFI30", "CST3")
+# Neutrophil markers: ITGAM = CD11b, FCGR3B = CD16b, FCGR2B = CD32b, CEACAM8 = CD66b, ITGB2 = CD18, MPO = Myeloperoxidase, KIT = CD117
+malignant_genes <- c("CD274", "CD276", "PDCD1LG2")  # CD274 = PDL1, CD276 = B7H3, PDCD1LG2 = CD273 (PDL2)
+genes_REMI <- c("TAC3", "TACR2", "OXT", "OXTR", "EDN1", "EDN3", "RIMS1", "NTNG2", "SCGB3A1", "TG", "TACR2", "KEL", "EDNRB", "CACNA1C", "LRRC4", "BRKRB2",
+                "MARCO", "ASGR1", "CNTN4", "FGF13", "NTNG2", "OLFM2", "NMU", "APLN", "NTNG1", "ACE", "PTHLH", "PTPRG", "SCN8A", "ROBO2", "NMUR1",
+                "APLNR", "BDKRB2", "PTH1R", "MST1", "PROK2", "GH1", "LAMA5", "NTNG2", "MST1R", "PROKR2", "PRLR", "BCAM", "FGF13", "OLFM2", "SCN8A")
+genes_CellPhoneDB <- c("ADORA2A", "ENTPD1", "CADM1", "NAMPT", "NTRK1", "GPI", "COPA", "CCL3", "IDE", "NAMPT", "GRN", "CD74", "TNFRSF10B", "FASLG",
+                       "CCR8", "CCL18", "MIF", "CD27", "CD70", "CD2", "CD58", "CD74", "APP", "LAMP1", "FAM3C", "PDCD1", "KLRB1", "CLEC2D", "HLA-C",
+                       "FAS", "FASLG", "CCR5", "TNFRSF13B", "CD70", "TNFRSF17", "SEMA4A", "PLXND1", "PTPRC", "CD22", "HLA-DPB1", "NRG1", "CD40",
+                       "CD40LG", "CCL4", "CRTAM", "CADM1", "CXCL13", "CXCR5", "CCL3", "CADM1", "NRG1", "LSR", "IFNG", "IFNR", "CXCR3", "CXCL9",
+                       "CXCL10", "CD200", "CD200R1", "CCL3", "CNR2", "CCR8")
+genes_REMI2 <- c("ACE", "BDKRB2", "NMU", "NMUR1", "PTHLH, PTH1R", "NTNG2", "LRRC4", "APLN", "APLNR", "TG", "ASGR1", "PTPRG", "CNTN4", "PTPRG", 
+                 "SCN8A", "FGF13", "ROBO2", "OLFM2", "SCGB3A1", "MARCO", "NTNG2", "LGR4", "NDP", "BDKRB2", "TG", "RIMS1", "CACNA1C", "OXT", "OXTR")
+
+genes_text <- unique(c(t_genes, b_genes, plasma_genes, hpsc_genes, mye_genes, nk_genes, pDC_genes, malignant_genes, genes_REMI, genes_CellPhoneDB, genes_REMI2))
+rm(b_genes); rm(plasma_genes); rm(mye_genes); rm(nk_genes); rm(pDC_genes); rm(malignant_genes); rm(hpsc_genes); rm(genes_REMI); rm(genes_CellPhoneDB); rm(genes_REMI2) #rm(fib_genes); rm(ang_genes); rm(epi_genes); rm(plat_genes); rm(mast_genes); rm(rbc_genes); rm(neu_genes);  rm(end_genes) 
+```
+
+## Azimuth Cell Type Predictions (Bone Marrow)
+```{r}
+DLBCL.big <- readRDS("../DLBCL_big_final.rds")
+head(DLBCL.big)
+```
+
+
+```{r}
+library(Seurat)
+predictions <- read.delim('../Azimuth_BM/azimuth_pred.tsv', row.names = 1)
+DLBCL.big <- AddMetaData(
+  object = DLBCL.big,
+	metadata = predictions)
+head(DLBCL.big)
+```
+
+```{r}
+projected.umap <- readRDS('../Azimuth_BM/azimuth_umap.Rds')
+DLBCL.big <- DLBCL.big[, Cells(projected.umap)]
+DLBCL.big[['umap.proj']] <- projected.umap
+DimPlot(DLBCL.big, group.by = "predicted.celltype.l2", reduction = "umap", label = FALSE, label.size=2) + ggtitle("Bone Marrow")
+```
+
+```{r}
+DLBCL.big <- AddAzimuthResults(DLBCL.big, filename = '../Azimuth_BM/azimuth_results.Rds')
+# Change column names of the seurat object
+colnames(DLBCL.big@meta.data)[colnames(DLBCL.big@meta.data) == "predicted.celltype.l2"] <- "predicted_celltype_BoneMarrow"
+colnames(DLBCL.big@meta.data)[colnames(DLBCL.big@meta.data) == "predicted.celltype.l2.score"] <- "predicted_celltype_BoneMarrow_score"
+colnames(DLBCL.big@meta.data)[colnames(DLBCL.big@meta.data) == "mapping.score"] <- "mapping_score_BoneMarrow"
+```
+
+```{r}
+# Get the identities (cell indices or names) of cells with "pDC" as their cell type
+baeoma_idents <- colnames(DLBCL.big)[which(DLBCL.big$predicted_celltype_BoneMarrow == "BaEoMa")]
+#baeoma_cells <- WhichCells(DLBCL.big, idents = baeoma_idents)
+DimPlot(DLBCL.big, group.by = "predicted_celltype_BoneMarrow", reduction = "umap", label = FALSE, label.size=2, cells.highlight=baeoma_idents, cols.highlight = "black") + ggtitle("BaEoMa") + NoLegend()
+```
+
+```{r}
+# Get the identities (cell indices or names) of cells with "pDC" as their cell type
+pdc_idents <- colnames(DLBCL.big)[which(DLBCL.big$predicted_celltype_BoneMarrow == "pDC")]
+# pdc_cells <- WhichCells(DLBCL.big, idents = pdc_idents)
+DimPlot(DLBCL.big, group.by = "predicted_celltype_BoneMarrow", reduction = "umap", label = FALSE, label.size=2, cells.highlight=pdc_idents, cols.highlight = "blue") + ggtitle("pDC") + NoLegend()
+```
+## Notes
+t_cells@reductions$umapT@cell.embeddings
+
+t_cells$celltype[which(t_cells$celltype == "pDC" & umap$UMAP_1 < 1 & umap$UMAP_2 < 5] <- "new cell"
+# Only the cluster which x=10, y=-2 is labeled as pDC
+
+
+
+```{r}
+cdc1_idents <- colnames(DLBCL.big)[which(DLBCL.big$predicted_celltype_BoneMarrow == "cDC1")]
+DimPlot(DLBCL.big, group.by = "predicted_celltype_BoneMarrow", reduction = "umap", label = FALSE, label.size=2, cells.highlight=cdc1_idents, cols.highlight = "blue") + ggtitle("cDC1") + NoLegend()
+```
+
+```{r}
+cdc2_idents <- colnames(DLBCL.big)[which(DLBCL.big$predicted_celltype_BoneMarrow == "cDC2")]
+DimPlot(DLBCL.big, group.by = "predicted_celltype_BoneMarrow", reduction = "umap", label = FALSE, label.size=2, cells.highlight=cdc2_idents, cols.highlight = "blue") + ggtitle("cDC2") + NoLegend()
+```
+
+## Monocytes or cDC2
+
+
+## Monaco Immune Data Reference = bulk RNA-seq samples of sorted immune cell populations
+```{r}
+# Bulk RNA-seq samples of sorted immune cell populations
+# MI <- MonacoImmuneData()
+MI <- celldex::MonacoImmuneData()
+df_MI <- readRDS("../DLBCL_big_final.rds")
+sce <- as.SingleCellExperiment(df_MI)
+results <- SingleR(test=sce, ref=MI, assay.type.test=1, labels = MI$label.main)#label.fine
+df_MI$predicted_celltype_MI <- results$labels
+table(results$labels)
+```
+
+```{r fig.width = 6, fig.height = 4}
+DimPlot(df_MI, group.by = "predicted_celltype_MI", reduction = "umap", split.by = "orig.ident", label = FALSE, label.size=2, ncol=2) + ggtitle("Monaco Immune Data")
+```
+
+```{r fig.width = 6, fig.height = 4}
+# Count cell types per sample
+celltype_counts <- df_MI@meta.data %>% 
+  group_by(orig.ident, predicted_celltype_MI) %>% 
+  summarise(n = n(), .groups = "drop") 
+
+# Calculate proportions
+celltype_props <- celltype_counts %>%
+  group_by(orig.ident) %>%
+  mutate(prop = n / sum(n))
+
+# Plot
+ggplot(celltype_props, aes(x = orig.ident, y = prop, fill = predicted_celltype_MI)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(x = "Sample ID", y = "Proportion", fill = "Predicted Cell Type") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+```{r}
+DimPlot(df_MI, group.by = "predicted_celltype_MI", reduction = "umap", label = FALSE, label.size=2) + ggtitle("Monaco Immune Data")
+```
+
+```{r}
+# Identify the cells with both "CD4+" and "CD8+" as their cell type
+t_cells <- df_MI$predicted_celltype_MI == "CD4+ T cells" | df_MI$predicted_celltype_MI == "CD8+ T cells"
+# Update the celltype values to "T cells" for the identified cells
+df_MI$predicted_celltype_MI[t_cells] <- "T cells"
+# Identify the cells with both "NK cells" and "Progenitors" as their cell type
+nk_cells <- df_MI$predicted_celltype_MI == "NK cells" | df_MI$predicted_celltype_MI == "Progenitors"
+# Update the celltype values to "NK cells" for the identified cells
+df_MI$predicted_celltype_MI[nk_cells] <- "NK cells"
+```
+
+```{r}
+# Split the "Dendritic cells" category down into "pDC", "cDC1", and "cDC2"
+df_MI$predicted_celltype_MI[pdc_idents] <- "pDC"
+df_MI$predicted_celltype_MI[cdc1_idents] <- "cDC1"
+df_MI$predicted_celltype_MI[cdc2_idents] <- "cDC2"
+```
+
+```{r}
+DimPlot(df_MI, group.by = "predicted_celltype_MI", reduction = "umap", label = FALSE, label.size=2) + ggtitle("Monaco Immune Data")
+```
+
+```{r}
+# Identify the cells with both "CD4+" and "CD8+" as their cell type
+mix_cells <- df_MI$predicted_celltype_MI == "Monocytes" | df_MI$predicted_celltype_MI == "cDC2"
+df_MI$predicted_celltype_MI[mix_cells] <- "Monocytes/cDC2"
+umap <- DimPlot(df_MI, group.by = "predicted_celltype_MI", reduction = "umap", label = FALSE, label.size=2) + ggtitle("Monaco Immune Data")
+```
+
+
+```{r}
+# Getting rid of the pDC datapoints outside of the cluster
+df_MI$predicted_celltype_MI[which(df_MI$predicted_celltype_MI == "pDC" & umap$UMAP_1 < 9 & umap$UMAP_2 > -10)] <- "B cells"
+df_MI$predicted_celltype_MI[which(df_MI$predicted_celltype_MI == "pDC" & umap$UMAP_1 < 0 & umap$UMAP_2 < -10)] <- "Monocytes/cDC2"
+
+dendritic <- df_MI$predicted_celltype_MI == "Dendritic cells"
+df_MI$predicted_celltype_MI[dendritic] <- "Monocytes/cDC2"
+
+mix_cells <- df_MI$predicted_celltype_MI == "Monocytes/cDC2" | df_MI$predicted_celltype_MI == "cDC1"
+df_MI$predicted_celltype_MI[mix_cells] <- "Monocytes/cDC"
+```
+
+```{r}
+my_colors <- c("T cells" = "#8C1515", "B cells" = "#D9C393", "pDC" = "red", "NK cells" = "yellow", "Monocytes/cDC" = "orange")
+DimPlot(df_MI, group.by = "predicted_celltype_MI", reduction = "umap", label = FALSE, label.size=2, cols=my_colors) + ggtitle("Cell Type Annotation")
+```
+
+```{r}
+DimPlot(df_MI, group.by = "predicted_celltype_MI", reduction = "umap", label = FALSE, label.size=2, split.by = "predicted_celltype_MI") + ggtitle("Monaco Immune Data")
+```
+
+
+
+```{r}
+# Define a function to prepare 10X HNSCC atlas data and write a matrix for CIBERSORTx.
+write_cibersortx_mx <- function(rna, lm22, metadata, metatype = "cell_type",
+																metasubtype = NULL, codex_full = NULL, split_niche = FALSE) {
+	# 1. Prepare signatures from LM22 microarray data for CIBERSORTx.
+	genes <- sort(rownames(rna))
+
+	# 2. Prepare 10X DLBCL atlas scRNA-seq data for CIBERSORTx.
+	cibersortx <- rna[genes, ]
+  metadata <- metadata[, c("seurat_clusters", metatype)]
+	colnames(metadata)[2] <- "metatype"
+	metadata$seurat_clusters <- as.vector(metadata$seurat_clusters)
+	metadata$metatype <- as.vector(metadata$metatype)
+
+
+	# Create a vector of sampled cell IDs (max size of all files in CIBERSORTx is 1 GB).
+  all_ids <- c()
+	for (cell_class in unique(metadata$metatype)) {
+		sampled_ids <- which(metadata$metatype == cell_class)
+		if (length(sampled_ids) > 1000) sampled_ids <- sample(sampled_ids, size = 1000, replace = FALSE)
+		all_ids <- c(all_ids, sampled_ids)
+	}
+
+	# Correct cell frequencies.
+	cibersortx <- cibersortx[, all_ids]
+	metadata <- metadata[all_ids, ]
+
+	## Write final matrix.
+	metadata <- t(metadata)
+	colnames(cibersortx) <- metadata[2, ]
+	names(dimnames(cibersortx)) <- c("GeneSymbol", "")
+	
+	write.table(cibersortx, file = "scRNAseq-for-CIBERSORTx-predicted_celltype_MixReference2.0.txt", sep = "\t", quote = FALSE, row.names = TRUE, col.names = NA)
+	
+}
+
+
+
+########################## Process Data ########################################
+# Prepare 10X DLBCL atlas scRNA-seqq data with neutrophil gene expression signature
+# from LM22 microarray data for CIBERSORTX
+DLBCL_atlas <- df_MI
+## Import CIBERSORT neutrophil gene expression signature from LM22 matrix.
+lm22 <- as.matrix(read.delim("../LM22_source_GEPs.txt", row.names = 1))
+
+## Prepare 10X HNSCC atlas data for CIBERSORTx.
+DefaultAssay(DLBCL_atlas) <- "SCT"
+rna <- GetAssayData(DLBCL_atlas, assay = "SCT", slot = "data")
+rna[which(rna < 0)] <- 0
+
+## Add neutrophil gene expression signature and write data for CIBERSORTx
+## separated by cell type or REMI cluster.
+write_cibersortx_mx(rna, lm22, metadata = DLBCL_atlas@meta.data, metatype = "predicted_celltype_MI")
+```
+
+
+
+```{r}
+# Generate Gene Subset File for CIBERSORTx
+
+# Get gene names from TCGA data
+TCGA <- readRDS("LBCL/TCGA.DLBC.data.RData")
+TCGA_genes <- TCGA$names
+
+# rna contains the gene names from 10X data
+rna_genes <- trimws(as.list(rownames(rna)))
+
+# Intersect the two lists
+gene_list <- intersect(TCGA_genes, rna_genes)
+length(gene_list)
+
+```
+
+
+
+```{r}
+# Set the column as Ident
+DLBCL_atlas <- SetIdent(DLBCL_atlas, value = "predicted_celltype_MI")
+table(Idents(DLBCL_atlas))
+
+# Find markers for all clusters
+all_markers <- FindAllMarkers(DLBCL_atlas, only.pos = TRUE)
+head(all_markers)
+
+top_200_per_cluster <- all_markers %>%
+  group_by(cluster) %>%
+  arrange(desc(avg_log2FC)) %>%  # Arrange by log fold change; change this if you want to use another metric
+  slice_head(n = 194) %>%
+  ungroup()
+
+# Convert the result to a list, where each element is a data frame for one cluster
+top_200_list <- split(top_200_per_cluster, top_200_per_cluster$cluster)
+
+# Extract the gene names from each cluster's top 25
+genes_top_200_list <- lapply(top_200_list, function(x) x$gene)
+genes_top_200_list <- unique(unlist(genes_top_200_list))
+
+# Intersect with gene_list to make sure the genes exist in both 10X and TCGA data
+gene_list <- intersect(genes_top_200_list, gene_list)
+length(gene_list)
+```
+
+# Add the genes from REMI & CellPhoneDB into the final_gene_list
+```{r}
+CR_3m_1130 <- read.csv("../Interactome_Analysis_Results/20221130_3m_CR_node_list.csv")
+CR_6m_1130 <- read.csv("../Interactome_Analysis_Results/20221130_6m_CR_node_list.csv")
+PD_3m_1130 <- read.csv("../Interactome_Analysis_Results/20221130_3m_PD_node_list.csv")
+PD_6m_1130 <- read.csv("../Interactome_Analysis_Results/20221130_6m_PD_node_list.csv")
+CR_3m_0125 <- read.csv("../Interactome_Analysis_Results/20230125_3m_CR_node_list.csv")
+CR_6m_0125 <- read.csv("../Interactome_Analysis_Results/20230125_6m_CR_node_list.csv")
+PD_3m_0125 <- read.csv("../Interactome_Analysis_Results/20230125_3m_PD_node_list.csv")
+PD_6m_0125 <- read.csv("../Interactome_Analysis_Results/20230125_6m_PD_node_list.csv")
+cdb_3m_CR <- read.table("../Interactome_Analysis_Results/CellPhoneDB_Results/3m_CR_Outputs/significant_means.txt", sep="\t", header=TRUE)
+cdb_6m_CR <- read.table("../Interactome_Analysis_Results/CellPhoneDB_Results/6m_CR_Outputs/significant_means.txt", sep="\t", header=TRUE)
+cdb_3m_PD <- read.table("../Interactome_Analysis_Results/CellPhoneDB_Results/3m_PD_Outputs/significant_means.txt", sep="\t", header=TRUE)
+cdb_6m_PD <- read.table("../Interactome_Analysis_Results/CellPhoneDB_Results/6m_PD_Outputs/significant_means.txt", sep="\t", header=TRUE)
+
+REMI <- list(CR_3m_1130, CR_6m_1130, PD_3m_1130, PD_6m_1130, CR_3m_0125, CR_6m_0125, PD_3m_0125, PD_6m_0125)
+gene_list_REMI_cpdb <- list()
+for(file in REMI) {
+  gene_REMI <- unique(file$gene)
+  gene_list_REMI_cpdb <- append(gene_list_REMI_cpdb, gene_REMI)
+}
+
+cpdb <- list(cdb_3m_CR, cdb_6m_CR, cdb_3m_PD, cdb_6m_PD)
+for(file in cpdb) {
+  gene_cpdb1 <- unique(file$gene_a)
+  gene_cpdb2 <- unique(file$gene_b)
+  gene_cpdb <- append(gene_cpdb1, gene_cpdb2)
+  gene_list_REMI_cpdb <- append(gene_list_REMI_cpdb, gene_cpdb)
+}
+
+gene_list_REMI_cpdb <- unlist(gene_list_REMI_cpdb)
+```
+
+
+```{r}
+# Finalized gene list: A combination of all the 820 + 201 = 1021 genes
+final_gene_list <- sort(unique(c(gene_list, genes_text, gene_list_REMI_cpdb)))
+length(final_gene_list)
+
+# Open the file in append mode
+output <- file("../CIBERSORTx_Gene_Subset_File.txt", "a")
+# Write additional lines to the file
+for (i in final_gene_list) {
+  writeLines(i, output)
+  flush(output)
+}
+# Close the connection
+close(output)
+```
+
+
+
+
+
+# CIBERSORTx Workflow
+## Tutorial 1: Build a Signature Matrix File from Single-Cell RNA Sequencing Data
+## Tutorial 2 - Impute Cell Fractions
+## Tutorial 5 - Impute Gene Expression, High-Resolution Mode
+
+
+
+
+
+```{r}
+library(ggplot2)  # graphics
+library(survival)  # Survival analysis
+library(GGally)  # ggplot2 survival plots
+library(factoextra)  # PCA visualization
+library(cluster)  # k medoids (pam)
+library(tidyr)
+library(reshape2)
+
+getwd()
+cell_fraction <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs_v2.0/CIBERSORTxGEP_Job64_Fractions.txt")
+head(cell_fraction)
+```
+
+```{r}
+# Exclude unwanted columns
+cell_fraction <- subset(cell_fraction, select = -c(P.value, RMSE, Correlation))
+
+cell_fraction$Mixture <- rownames(cell_fraction)  # If row names are the mixtures
+cell_fraction_long <- reshape2::melt(cell_fraction, id.vars = "Mixture")
+names(cell_fraction_long) <- c("Mixture", "CellType", "Proportion")
+
+# Convert 'Mixture' to numeric and sort in increasing order
+cell_fraction_long$Mixture <- factor(cell_fraction_long$Mixture, levels = sort(as.numeric(unique(cell_fraction_long$Mixture))))
+
+ggplot(cell_fraction_long, aes(x = Mixture, y = Proportion, fill = CellType)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+  labs(x = "Mixture", y = "Proportion", fill = "Cell Type") +
+  theme(legend.position = "bottom")
+```
+
+
+```{r}
+# Convert the row names to a column "Mixture"
+cell_fraction$Mixture <- rownames(cell_fraction)
+
+# Reshape the data to long format
+cell_fraction_long <- cell_fraction %>%
+  pivot_longer(-Mixture, names_to = "Cell_Type", values_to = "Fraction")
+
+# Create the boxplots
+ggplot(cell_fraction_long, aes(x = Cell_Type, y = Fraction)) +
+  geom_boxplot() +
+  labs(title = "Boxplot of Cell Fractions",
+       x = "Cell Type",
+       y = "Cell Fraction") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+cell_fraction <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs_v2.0/CIBERSORTxGEP_Job64_Fractions.txt")
+bulk_metadata <- read.delim("LBCL/TCGA.DLBC.info.tsv")
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "EXPR")
+(bulk_metadata)
+```
+```{r}
+head(bulk_metadata)
+```
+
+
+
+# Survival Analysis
+
+```{r}
+# Calculate survival estimates at 1, 2, 3, 5, 10 years where data are available.
+calculate_survival_estimates <- function(surv_fit, check_times) {
+  estimates <- summary(surv_fit, times = check_times)
+  estimates_df <- data.frame(group =  estimates[[10]],
+  													 time_years = estimates[[2]], n_risk = estimates[[3]],
+  													 n_event = estimates[[4]], n_censor = estimates[[5]],
+  													 survival = estimates[[6]], std_err = estimates[[7]],
+  													 lower_95ci = estimates[[15]], upper_95ci = estimates[[16]])
+  return(estimates_df)
+}
+
+
+## Statistical analysis of model performance.
+# rho = 0 is the log-rank or Mantel-Haenszel test.
+survial_estimates_pval <- function(survival_df, check_times, time_max) {
+  pval_df <- data.frame()
+  for (surv_time in c(check_times, time_max)) {
+  	surv_stat <- survdiff(Surv(Time, Status) ~ Cluster, data = survival_df, subset = (Time <= surv_time), rho = 0)
+  	p_val <- signif(1 - pchisq(surv_stat$chisq, df = length(surv_stat$n) - 1), digits = 3)
+  	pval_df <- rbind(pval_df, data.frame(Time = surv_time, Low_n = surv_stat$n["Cluster=1"],
+  																			 High_n = surv_stat$n["Cluster=2"], P = p_val))
+  }
+  return(pval_df)
+}
+```
+
+
+```{r}
+# Plot survival plot based on a specific gene from CIBERSORTx results
+gene_survival_analysis <- function(input_gene, Tcell_expression, cell_name, survival_df) {
+  
+  # If the gene does not exist in list
+  if(nrow(data.frame(t(Tcell_expression[input_gene, ]))) == 0) {
+    print("Gene does not exist in the list.")
+    next
+  }
+  
+  # Create a dataframe of the expression level of the gene
+  gene_expression <- data.frame(t(Tcell_expression[input_gene, ]))
+  gene_expression$GeneSymbol <- rownames(gene_expression)
+  colnames(gene_expression)[1] <- input_gene
+  
+  # Merge the cell expression dataset with survival
+  gene_expression <- merge(gene_expression, survival_df, by.x = "GeneSymbol", by.y = "PatientID")
+  
+  # Get the median of the expression level 
+  median <- median(as.numeric(gene_expression[[input_gene]]))
+  gene_expression$Expression_Level <- ifelse(as.numeric(gene_expression[[input_gene]]) > median, "High", "Low")
+  
+  if(length(unique(gene_expression$Expression_Level)) == 1) {
+    next
+  } else {
+  
+  # Fit the survival model
+  fit <- survfit(Surv(Time, Status) ~ Expression_Level, data = gene_expression, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(Time, Status) ~ Expression_Level, data = gene_expression)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+  # Plot the survival curve
+#  p <- ggsurv(fit, CI=TRUE, surv.col=c("#0000CC", "#CC0000"), cens.col = "#666666", back.white = TRUE, xlab = "Time (years)", ylab = "Survival Probability") + ggtitle(paste("Survival Plot under", input_gene, "Expression", "_", cell_name)) + annotate("text", x=max(fit$Time)*0.5, y=1, label = paste("p-value:", round(p_val, 3)), hjust=0.5, vjust=-0.5, size=4, color="red")
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=gene_expression, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of", input_gene, "in", cell_name))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  ggsave(filename=paste0("../Survival_Plots/", input_gene, "_", cell_name, "_Survival_Plot.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(Time, Status) ~ Expression_Level, data = gene_expression)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=gene_expression)
+  # Extract HR value
+  hr <- 0
+  label <- "High"
+  hr_high <- exp(coef(cox_model)['Expression_LevelHigh'])
+  hr_low <- exp(coef(cox_model)['Expression_LevelLow'])
+  if(is.na(hr_high) == TRUE) { hr <- hr_low; label <- "Low"}
+  else { hr <- hr_high; label <- "High" }
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of", input_gene, "in", cell_name)) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../Survival_Plots/", input_gene, "_", cell_name, "_Cox_Regression.png"), g$plot, width=10, height=6)
+  
+  hr <- hr[1]
+  lst <- list('one' = p_val, 'two' = hr, 'three' = hr_pvalue)
+  return(lst)
+}}
+```
+
+
+```{r}
+survival_analysis_model <- function(metadata, survtype, check_times, time_max=20, surv_scale=TRUE, gene_list) {
+  
+  survtypes <- c("OS", "DSS", "DFI", "PFI")
+  if (!(survtype %in% survtypes)) {
+    return("Survtype not found")
+  }
+  
+  # Format data
+  survival_df <- data.frame(PatientID = metadata[, "Mixture"], cell_fraction[, -1], Status = metadata[, survtype], Time = metadata[, paste0(survtype, ".time")] / 365.25)
+  na_ids <- unique(c(which(is.na(survival_df$Time)), which(is.na(survival_df$Status))))
+  if (length(na_ids) > 0) survival_df <- survival_df[-na_ids, ]
+  #survival_df <- subset(survival_df, select = -Neutrophils)
+  
+  ## Perform PCA.
+  surv_pca <- prcomp(survival_df[, 2:6], scale = surv_scale) 
+  
+  ## Scree plot.
+  # print(fviz_eig(surv_pca))
+  
+  ## Plot data on PC1 and PC2.
+  for (check_time in check_times) {
+  	survival_df$Check <- NA
+  	survival_df$Check[which(survival_df$Time < check_time & survival_df$Status == 0)] <- 0
+  	survival_df$Check[which(survival_df$Time > check_time & survival_df$Status == 0)] <- 1
+  	survival_df$Check[which(survival_df$Time > check_time & survival_df$Status == 1)] <- 1
+  	print(fviz_pca_ind(surv_pca, geom = "point", col.ind = survival_df$Check, gradient.cols = c("#BB0000", "#003FAC")))
+  }
+  
+  # Identify clusters
+  survival_df$Cluster <- pam(survival_df[, 2:6], k = 2, nstart = 100)$clustering
+  
+  #Build survival model
+  surv_fit <- survfit(Surv(Time, Status) ~ Cluster, data = survival_df)
+  
+  ## Calculate survival estimates at 1, 2, 3, 5, 10 years where data are available.
+  estimates_df <- calculate_survival_estimates(surv_fit, check_times)
+  
+  ## Statistical analysis of model performance.
+  pval_df <- survial_estimates_pval(survival_df, check_times, time_max)
+  
+  ## Plot the survival fit.
+  p <- ggsurv(surv_fit, CI = TRUE, surv.col = c("#0000CC", "#CC0000"), cens.col = "#666666",
+  						back.white = TRUE, xlab = "Time (years)", ylab = "Survival probability",
+  						main = paste0(" P = ", pval_df$P[pval_df$Time == time_max]))
+  p <- p + expand_limits(x = c(0, time_max))
+  p <- p + expand_limits(y = c(0, 1))
+  print(p)
+  
+  # Fit the model
+  cox_model <- coxph(Surv(Time, Status) ~ Cluster, data = survival_df)
+  # Print a summary of the model
+  summary(cox_model)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model)
+  # Get P value of the probability
+  logrank_test <- survdiff(Surv(Time, Status) ~ Cluster, data = survival_df)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  # Create the survival plot
+  g <- ggsurv(predicted_survival, back.white=TRUE, xlab="Time (years)", ylab="Survival Probability") + ggtitle("Survival Plot with COX Regression") + annotate("text", x=max(predicted_survival$Time)*0.5, y=1, label = paste("p-value:", round(p_val, 3)), hjust=0.5, vjust=-0.5, size=4, color="red")
+  print(g)
+  
+  return (survival_df)
+}
+```
+
+
+
+
+# I. MixReference2.0
+## Read in the CIBERSORTx cell expression profiles
+```{r}
+# Extract the T cell expression data from CIBERSORTx
+#Tcell_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_v2.0/Impute_Cell_Expression_MixReference2.0/CIBERSORTxHiRes_Job23_T_Window20.txt")
+#Bcell_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_v2.0/Impute_Cell_Expression_MixReference2.0/CIBERSORTxHiRes_Job23_B_Window20.txt")
+#Monocytes_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_v2.0/Impute_Cell_Expression_MixReference2.0/CIBERSORTxHiRes_Job23_Monocytes_Window20.txt")
+#NK_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_v2.0/Impute_Cell_Expression_MixReference2.0/CIBERSORTxHiRes_Job23_NK_Window20.txt")
+#pDC_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_v2.0/Impute_Cell_Expression_MixReference2.0/CIBERSORTxHiRes_Job23_pDC_Window20.txt")
+
+
+Tcell_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs_v2.0/CIBERSORTxHiRes_Job64_T_Window24.txt", row.names=1)
+Bcell_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs_v2.0/CIBERSORTxHiRes_Job64_B_Window24.txt", row.names=1)
+Monocytes_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs_v2.0/CIBERSORTxHiRes_Job64_Monocytes_Window24.txt", row.names=1)
+NK_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs_v2.0/CIBERSORTxHiRes_Job64_NK_Window24.txt", row.names=1)
+pDC_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs_v2.0/CIBERSORTxHiRes_Job64_pDC_Window24.txt", row.names=1)
+Treg_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs_v2.0/CIBERSORTxHiRes_Job64_Tregs_Window24.txt", row.names=1)
+
+
+#Tcell_expression <- read.delim("../CIBERSORTx_Job111_output/CIBERSORTxHiRes_Job111_T_Window24.txt", row.names=1)
+#Bcell_expression <- read.delim("../CIBERSORTx_Job111_output/CIBERSORTxHiRes_Job111_B_Window24.txt", row.names=1)
+#Monocytes_expression <- read.delim("../CIBERSORTx_Job111_output/CIBERSORTxHiRes_Job111_Monocytes_Window24.txt", row.names=1)
+#NK_expression <- read.delim("../CIBERSORTx_Job111_output/CIBERSORTxHiRes_Job111_NK_Window24.txt", row.names=1)
+#pDC_expression <- read.delim("../CIBERSORTx_Job111_output/CIBERSORTxHiRes_Job111_pDC_Window24.txt", row.names=1)
+#Treg_expression <- read.delim("../CIBERSORTx_Job111_output/CIBERSORTxHiRes_Job111_Tregs_Window24.txt", row.names=1)
+
+```
+
+## Genes to be analyzed in deconvoluted TCGA dataset
+```{r SurvivalType, paged.print=FALSE}
+# Interactive gene specific survival analysis
+set.seed(123)
+check_times <- c(1, 2, 3, 5, 10)
+genes = c("CD200R1")
+cell_name <- "Tcon"
+# survtypes <- c("OS", "DSS", "DFI", "PFI")
+survival_type = "PFI"
+survival_df <- survival_analysis_model(bulk_metadata, survival_type, check_times, gene_list = final_gene_list)
+
+
+# Gene-specific survival analysis plot
+for (gene in genes) {
+  gene_survival_analysis(gene, Tcell_expression, cell_name, survival_df)
+}
+
+head(bulk_metadata)
+```
+
+# Single Gene Survival Analysis Plot
+```{r}
+  input_gene <- "ATF4"
+  # Create a dataframe of the expression level of the gene
+  gene_expression <- data.frame(t(subset(Bcell_expression, GeneSymbol == input_gene)))
+  gene_expression$GeneSymbol <- rownames(gene_expression)
+  colnames(gene_expression)[1] <- input_gene
+  
+  # Merge the cell expression dataset with survival
+  gene_expression <- merge(gene_expression, survival_df, by.x = "GeneSymbol", by.y = "PatientID")
+  
+  # Get the median of the expression level 
+  median <- median(as.numeric(gene_expression[[input_gene]]))
+  gene_expression$Expression_Level <- ifelse(gene_expression[[input_gene]] <= median, "Low", "High")
+  gene_expression$Expression_Level <- factor(gene_expression$Expression_Level, levels = c("Low", "High"))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(Time, Status) ~ Expression_Level, data = gene_expression, conf.int = 0.95)
+  
+  # Get P valueS
+#  logrank_test <- survdiff(Surv(Time, Status) ~ Expression_Level, data = gene_expression)
+#  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+  head(survival_df)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=gene_expression, size=1,  palette=c("#2E9FDF", "#E7B800"), conf.int=TRUE, pval=TRUE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("Low", "High"), risk.table.height = 0.25, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Survival Probability", conf.int.style = "step", risk.table.title="Number at risk") + ggtitle(paste("Survival Plot under", input_gene, "in", cell_name))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../Survival_Plots/", input_gene, "_", cell_name, "_Survival_Plot.png"), p)
+
+  
+  # Cox regression
+  #cox_model <- coxph(Surv(Time, Status) ~ Expression_Level, data = gene_expression)
+  # Get the predicted survival probabilities
+  #predicted_survival <- survfit(cox_model, data=gene_expression)
+  # Extract HR value
+  hr <- 0
+  label <- "High"
+  hr_high <- exp(coef(cox_model)['Expression_LevelHigh'])
+  hr_low <- exp(coef(cox_model)['Expression_LevelLow'])
+  #if(is.na(hr_high) == TRUE) { hr <- hr_low; label <- "Low"
+  #} else { hr <- hr_high; label <- "High" }
+  
+  # Ensure Expression_Level is a factor if it's not already
+  gene_expression$Expression_Level <- as.factor(gene_expression$Expression_Level)
+  
+  # Set 'low' as the reference level
+  gene_expression$Expression_Level <- relevel(gene_expression$Expression_Level, ref = "Low")
+  
+  # Fit the Cox proportional hazards model with 'low' as reference
+  cox_model <- coxph(Surv(Time, Status) ~ Expression_Level, data = gene_expression)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  print(hr[1])  # Make sure to use the correct coefficient name here
+  
+  # Print the summary
+  print(summary_cox)
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  print(hr_pvalue)
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#D9C393", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Regression under", input_gene, "in", cell_name)) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../Survival_Plots/", input_gene, "_", cell_name, "_Cox_Regression.png"), g$plot)
+  
+  print(p_val)
+  
+```
+
+
+## Genes to be analyzed in UN-deconvoluted TCGA datasetS
+```{r}
+# Genes to be analyzed in un-deconvoluted TCGA dataset
+
+# Edit the format of the TCGA dataset to be aligned with Tcell_Expression
+TCGA[, 1] <- NULL
+colnames(TCGA)[colnames(TCGA) == "names"] <- "GeneSymbol"
+
+# Gene-specific survival analysis plot
+for (gene in genes) {
+  gene_survival_analysis(gene, TCGA, cell_name, survival_df)
+}
+
+head(TCGA)
+```
+
+
+## Genes for analyzing REMI interactome analysis results 1
+```{r}
+# CR: Complete Response, PD: Progressive Disease
+remi_30d <-  readRDS("../REMI_Results/20240414_REMI/20240414_30d_remi_output.rds")
+remi_3m <- readRDS("../REMI_Results/20240414_REMI/20240414_3m_remi_output.rds")
+remi_6m <- readRDS("../REMI_Results/20240414_REMI/20240414_6m_remi_output.rds")
+
+remi_30d_cr <- remi_30d$CR$interactome
+remi_30d_pd <- remi_30d$PD$interactome
+remi_3m_cr <- remi_3m$CR$interactome
+remi_3m_pd <- remi_3m$PD$interactome
+remi_6m_cr <- remi_6m$CR$interactome
+remi_6m_pd <- remi_6m$PD$interactome
+
+remi <- rbind(remi_30d_cr, remi_30d_pd, remi_3m_cr, remi_3m_pd, remi_6m_cr, remi_6m_pd)
+remi <- remi[,1:4]
+remi <- unique(remi)
+ligand <- remi[, c(1,3)]
+receptor <- remi[, c(2,4)]
+names(receptor) <- names(ligand)
+receptor <- rbind(ligand, receptor)
+receptor <- unique(receptor)
+names(receptor) <- c("gene", "cell_type")
+
+results <- data.frame(
+  'Celltype' = character(0),    # Empty integer column
+  'Gene' = character(0),    # Empty numeric column
+  'KM_pvalue' = numeric(0),  # Empty character column
+  'hr' = numeric(0),      # Empty factor column
+  'hr_pvalue' = numeric(0),
+  stringsAsFactors = FALSE   # Prevent automatic conversion of strings to factors
+)
+
+df <- receptor
+
+for(row in 1:nrow(df)) {
+  cell_name <- ""
+  values <- NULL
+  celltype_file <- Tcell_expression
+  if(df[row, "cell_type"] == "B cell") {
+    celltype_file <- Bcell_expression
+    cell_name <- "B cell"
+  } else if(df[row, "cell_type"] == "Myeloid DC") {
+    celltype_file <- Monocytes_expression
+    cell_name <- "Myeloid DC"
+  } else if(df[row, "cell_type"] == "Tcon") {
+    celltype_file <- Tcell_expression
+    cell_name <- "Tcon"
+  } else if(df[row, "cell_type"] == "Treg") {
+    celltype_file <- Treg_expression
+    cell_name <- "Treg"
+  #} else if(df[row, "cell_type"] == "CAR+ Treg") {
+    #celltype_file <- Treg_expression
+    #cell_name <- "CAR+ Treg"
+  #} else if(df[row, "cell_type"] == "CAR- Treg"){
+    #celltype_file <- Treg_expression
+    #cell_name <- "CAR- Treg"
+  } else { 
+    cell_name <- "Unknown"
+  }
+  single_gene <- df[row, "gene", drop=TRUE]
+  
+  print(paste0(single_gene, " ", cell_name))
+    
+  tryCatch({
+    # Attempt to run this code
+    values <- gene_survival_analysis(single_gene, celltype_file, cell_name, survival_df) # celltype_file OR TCGA
+    
+  new_data <- data.frame(
+    Celltype = cell_name,  # some numeric data
+    Gene = single_gene,  # some character data 
+    KM_pvalue = values$one,  # some factor data
+    hr = values$two,
+    hr_pvalue = values$three
+  )
+  results <- rbind(results, new_data)
+  
+  }, error = function(e) {
+    print("error")
+  })
+  
+}
+results <- results[order(results$KM_pvalue, decreasing = FALSE), ]
+write.csv(results, file = "../Survival_Plots/a_results.csv",
+            row.names = FALSE)
+
+```
+
+
+# Genes from CellPhoneDB interactome analysis to be analyzed and survival plots generated
+
+```{r}
+# Base_v1.0, Treg_v2.0, CAR_v3.0
+choice <- "Base_v1.0"
+
+cdb_30d_CR <- read.table(paste0("../CellPhoneDB_Results/", choice, "/30d/CR/significant_means.txt"), sep="\t", header=TRUE)
+cdb_30d_PD <- read.table(paste0("../CellPhoneDB_Results/", choice, "/30d/PD/significant_means.txt"), sep="\t", header=TRUE)
+cdb_3m_CR <- read.table(paste0("../CellPhoneDB_Results/", choice, "/3m/CR/significant_means.txt"), sep="\t", header=TRUE)
+cdb_3m_PD <- read.table(paste0("../CellPhoneDB_Results/", choice, "/3m/PD/significant_means.txt"), sep="\t", header=TRUE)
+cdb_6m_CR <- read.table(paste0("../CellPhoneDB_Results/", choice, "/6m/CR/significant_means.txt"), sep="\t", header=TRUE)
+cdb_6m_PD <- read.table(paste0("../CellPhoneDB_Results/", choice, "/6m/PD/significant_means.txt"), sep="\t", header=TRUE)
+
+
+survival_type = "PFI"
+survival_df <- survival_analysis_model(bulk_metadata, survival_type, check_times, gene_list = final_gene_list)
+
+```
+# for(file_path in file_paths) {
+#   data <- read.table(file_path, sep="\t", header=TRUE)   
+#}
+
+```{r}
+# cdb_30d_CR, cdb_30d_PD
+# cdb_3m_CR, cdb_3m_PD
+# cdb_6m_CR, cdb_6m_PD
+subset <- cdb_3m_PD %>% select(-c(1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13))
+node_list <- data.frame(
+  gene_a = character(0),
+  gene_b = character(0),
+  interaction = character(0)
+)
+
+for(i in 1:nrow(subset)) {
+  a = subset[i, 1]
+  b = subset[i, 2]
+  for(j in 1:ncol(subset)) {
+    if(is.character(subset[i, j])) {
+      next()
+    }
+    if(is.na(subset[i, j])) {
+      next()
+    }
+    new_row <- data.frame(
+      gene_a = a,
+      gene_b = b,
+      interaction = colnames(subset)[j]
+    )
+    node_list <- rbind(node_list, new_row)
+  }
+}
+
+# Function to split by the middle period
+split_interaction <- function(interaction) {
+  parts <- unlist(strsplit(interaction, "_", fixed = TRUE)) # Split by underscore
+  left <- parts[1]   # First part of the split
+  right <- if (length(parts) > 1) parts[2] else "" # Second part if it exists, else empty string
+  c(left, right)
+}
+
+split_columns <- t(sapply(node_list$interaction, split_interaction))
+node_list$interaction_left <- split_columns[, 1]
+node_list$interaction_right <- split_columns[, 2]
+node_list$interaction <- NULL
+
+node_list1 <- node_list[, c(1,3)]
+node_list2 <- node_list[, c(2,4)]
+colnames(node_list1) <- colnames(node_list2)
+final_node_list <- rbind(node_list1, node_list2)
+names(final_node_list) <- c("gene", "cell_type")
+final_node_list <- unique(final_node_list)
+
+# Survival analysis pipeline
+biospies_celltype <- unique(final_node_list[, "cell_type"])
+
+results <- data.frame(
+  'Celltype' = character(0),    # Empty integer column
+  'Gene' = character(0),    # Empty numeric column
+  'KM_pvalue' = numeric(0),  # Empty character column
+  'hr' = numeric(0),      # Empty factor column
+  'hr_pvalue' = numeric(0),
+  stringsAsFactors = FALSE   # Prevent automatic conversion of strings to factors
+)
+
+counter <- 0
+for(row in 1:nrow(final_node_list)) {
+  error <<- FALSE
+  cell_name <- ""
+  celltype_file <- Tcell_expression
+  if(final_node_list[row, "cell_type"] == "B.cell") {
+    celltype_file <- Bcell_expression
+    cell_name <- "Bcell"
+  }
+  else if(final_node_list[row, "cell_type"] == "Myeloid.DC") {
+    celltype_file <- Monocytes_expression
+    cell_name <- "Myeloid.DC"
+  }
+  else if(final_node_list[row, "cell_type"] == "T.cell") {
+    celltype_file <- Tcell_expression
+    cell_name <- "T.cell"
+  }
+  #else if(final_node_list[row, "cell_type"] == "Treg") {
+    #celltype_file <- Treg_expression
+    #cell_name <- "Treg"
+  #}
+  #else if(final_node_list[row, "cell_type"] == "CAR0.Tcon") {
+    #celltype_file <- Tcell_expression
+    #cell_name <- "CAR- Tcon"
+  #}
+  #else if(final_node_list[row, "cell_type"] == "CAR0.Treg"){
+    #celltype_file <- Treg_expression
+    #cell_name <- "CAR- Treg"
+  #}
+  else { 
+    counter <<- counter + 1
+    celltype_file <- Tcell_expression 
+    cell_name <- "Unknown"
+  }
+    
+  single_gene <- final_node_list[row, "gene"]
+    
+  tryCatch({
+    # Attempt to run this code
+    values <- gene_survival_analysis(single_gene, celltype_file, cell_name, survival_df) # celltype_file OR TCGA
+    
+    new_data <- data.frame(
+      Celltype = cell_name,  # some numeric data
+      Gene = single_gene,  # some character data
+      KM_pvalue = values$one,  # some factor data
+      hr = values$two,
+      hr_pvalue = values$three
+    )
+    results <- rbind(results, new_data)
+    
+  }, error = function(e) {
+    # If an error occurs, run this code instead
+    error <<- TRUE
+    # message("An error occurred, running with TCGA instead.")
+  })
+  
+
+}
+
+results <- results[order(results$KM_pvalue, decreasing = FALSE), ]
+write.table(results, file = "../Survival_Plots/a_results.txt", sep = "\t",
+            row.names = FALSE, col.names = TRUE)
+write.csv(results, file = "../Survival_Plots/a_results.csv",
+          row.names = FALSE)
+
+```
+
+
+# CellChat
+```{r}
+# survtypes <- c("OS", "DSS", "DFI", "PFI")
+survival_type = "PFI"
+survival_df <- survival_analysis_model(bulk_metadata, survival_type, check_times, gene_list = final_gene_list)
+
+
+# Base_v1.0, Treg_v2.0, CAR_v3.0
+choice <- "Treg_v2.0"
+
+cellchat_30d_CR <- read.csv(paste0("../CellChat_Results/", choice, "/Response_30d/CR_30d.csv"))
+cellchat_30d_PD <- read.csv(paste0("../CellChat_Results/", choice, "/Response_30d/PD_30d.csv"))
+
+cellchat_3m_CR <- read.csv(paste0("../CellChat_Results/", choice, "/Response_3m/CR_3m.csv"))
+cellchat_3m_PD <- read.csv(paste0("../CellChat_Results/", choice, "/Response_3m/PD_3m.csv"))
+
+cellchat_6m_CR <- read.csv(paste0("../CellChat_Results/", choice, "/Response_6m/CR_6m.csv"))
+cellchat_6m_PD <- read.csv(paste0("../CellChat_Results/", choice, "/Response_6m/PD_6m.csv"))
+```
+
+
+```{r}
+# cellchat_30d_CR, cellchat_30d_PD
+# cellchat_3m_CR, cellchat_3m_PD
+# cellchat_6m_CR, cellchat_6m_PD
+df <- cellchat_6m_PD
+
+df <- df[, 1:4]
+ligand <- df[, c(3,1)]
+receptor <- df[, c(4,2)]
+names(receptor) <- names(ligand)
+df <- rbind(ligand, receptor)
+df <- unique(df)
+names(df) <- c("gene", "cell_type")
+
+results <- data.frame(
+  'Celltype' = character(0),    # Empty integer column
+  'Gene' = character(0),    # Empty numeric column
+  'KM_pvalue' = numeric(0),  # Empty character column
+  'hr' = numeric(0),      # Empty factor column
+  'hr_pvalue' = numeric(0),
+  stringsAsFactors = FALSE   # Prevent automatic conversion of strings to factors
+)
+
+error <- 0
+for(row in 1:nrow(df)) {
+  cell_name <- ""
+  values <- NULL
+  celltype_file <- Tcell_expression
+  if(df[row, "cell_type"] == "B cell") {
+    celltype_file <- Bcell_expression
+    cell_name <- "B.cell"
+  }
+  else if(df[row, "cell_type"] == "Myeloid DC") {
+    celltype_file <- Monocytes_expression
+    cell_name <- "Myeloid.DC"
+  }
+  else if(df[row, "cell_type"] == "Tcon") {
+    celltype_file <- Tcell_expression
+    cell_name <- "Tcon"
+  }
+  else if(df[row, "cell_type"] == "Treg") {
+    celltype_file <- Treg_expression
+    cell_name <- "Treg"
+  }
+  #else if(df[row, "cell_type"] == "CAR+ Treg") {
+    #celltype_file <- Treg_expression
+    #cell_name <- "CAR+ Treg"
+  #}
+  #else if(df[row, "cell_type"] == "CAR- Treg"){
+    #celltype_file <- Treg_expression
+    #cell_name <- "CAR- Treg"
+  #}
+  else { 
+    cell_name <- "Unknown"
+  }
+    
+  single_gene <- df[row, "gene"]
+    
+  tryCatch({
+    # Attempt to run this code
+    values <- gene_survival_analysis(single_gene, celltype_file, cell_name, survival_df) # celltype_file OR TCGA
+    
+    new_data <- data.frame(
+    Celltype = cell_name,  # some numeric data
+    Gene = single_gene,  # some character data 
+    KM_pvalue = values$one,  # some factor data
+    hr = values$two,
+    hr_pvalue = values$three
+  )
+  results <- rbind(results, new_data)
+  
+  }, error = function(e) {
+    error <<- error + 1
+  })
+  
+}
+results <- results[order(results$KM_pvalue, decreasing = FALSE), ]
+write.table(results, file = "../Survival_Plots/a_results.txt", sep = "\t",
+            row.names = FALSE, col.names = TRUE)
+write.csv(results, file = "../Survival_Plots/a_results.csv",
+            row.names = FALSE)
+```
+
+
+
+## Combined analysis - combined rank between the two node genes and separate patients based on combined rank
+
+```{r}
+# Extract the T cell expression data from CIBERSORTx
+Tcell_expression <- read.delim("../CIBERSORTx_Workflow_MixReference2.0/Impute_Cell_Expression_MixReference2.0/CIBERSORTxHiRes_Job23_T_Window20.txt")
+Bcell_expression <- read.delim("../CIBERSORTx_Workflow_MixReference2.0/Impute_Cell_Expression_MixReference2.0/CIBERSORTxHiRes_Job23_B_Window20.txt")
+Monocytes_expression <- read.delim("../CIBERSORTx_Workflow_MixReference2.0/Impute_Cell_Expression_MixReference2.0/CIBERSORTxHiRes_Job23_Monocytes_Window20.txt")
+NK_expression <- read.delim("../CIBERSORTx_Workflow_MixReference2.0/Impute_Cell_Expression_MixReference2.0/CIBERSORTxHiRes_Job23_NK_Window20.txt")
+pDC_expression <- read.delim("../CIBERSORTx_Workflow_MixReference2.0/Impute_Cell_Expression_MixReference2.0/CIBERSORTxHiRes_Job23_pDC_Window20.txt")
+```
+
+```{r}
+# Split the 'node1' column into two separate columns based on the "_" delimiter
+# CR_3m_1130_edge <- transform(CR_3m_1130_edge, 
+#                  node1_cell = sapply(strsplit(as.character(node1), "_"), `[`, 1),
+#                  node1_gene = sapply(strsplit(as.character(node1), "_"), `[`, 2))
+# CR_3m_1130_edge$node1 <- NULL
+
+# Split the 'node2' column into two separate columns based on the "_" delimiter
+# CR_3m_1130_edge <- transform(CR_3m_1130_edge, 
+#                  node2_cell = sapply(strsplit(as.character(node2), "_"), `[`, 1),
+#                  node2_gene = sapply(strsplit(as.character(node2), "_"), `[`, 2))
+# CR_3m_1130_edge$node2 <- NULL
+
+# Check the first few rows of the modified data
+#head(CR_3m_1130_edge)
+```
+
+```{r}
+REMI_Format <- function(file) {
+  # Split the 'node1' column into two separate columns based on the "_" delimiter
+  file <- transform(file, 
+                    node1_cell = sapply(strsplit(as.character(node1), "_"), `[`, 1),
+                    node1_gene = sapply(strsplit(as.character(node1), "_"), `[`, 2))
+  file$node1 <- NULL
+  
+  # Split the 'node2' column into two separate columns based on the "_" delimiter
+  file <- transform(file, 
+                    node2_cell = sapply(strsplit(as.character(node2), "_"), `[`, 1),
+                    node2_gene = sapply(strsplit(as.character(node2), "_"), `[`, 2))
+  file$node2 <- NULL
+  return(file)
+}
+
+CR_3m_1130_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-20221130/20221130_3m_CR_edge_list.csv")
+CR_6m_1130_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-20221130/20221130_6m_CR_edge_list.csv")
+PD_3m_1130_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-20221130/20221130_3m_PD_edge_list.csv")
+PD_6m_1130_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-20221130/20221130_6m_PD_edge_list.csv")
+CR_3m_0125_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-Tregs-20230125/3m/20230125_3m_CR_edge_list.csv")
+CR_6m_0125_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-Tregs-20230125/6m/20230125_6m_CR_edge_list.csv")
+PD_3m_0125_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-Tregs-20230125/3m/20230125_3m_PD_edge_list.csv")
+PD_6m_0125_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-Tregs-20230125/6m/20230125_6m_PD_edge_list.csv")
+
+CR_3m_1130_edge <- REMI_Format(CR_3m_1130_edge)
+CR_6m_1130_edge <- REMI_Format(CR_6m_1130_edge)
+PD_3m_1130_edge <- REMI_Format(PD_3m_1130_edge)
+PD_6m_1130_edge <- REMI_Format(PD_6m_1130_edge)
+CR_3m_0125_edge <- REMI_Format(CR_3m_0125_edge)
+CR_6m_0125_edge <- REMI_Format(CR_6m_0125_edge)
+PD_3m_0125_edge <- REMI_Format(PD_3m_0125_edge)
+PD_6m_0125_edge <- REMI_Format(PD_6m_0125_edge)
+```
+
+
+```{r}
+#Bcell_expression <- read.delim("../CIBERSORTx_Workflow_MixReference2.0/Impute_Cell_Expression_MixReference2.0/CIBERSORTxHiRes_Job23_B_Window20.txt")
+# Transpose the dataset to merge with info dataset
+#Bcell_expression <- as.data.frame(t(Bcell_expression), header=TRUE)
+#colnames(Bcell_expression) <- Bcell_expression[1, ]
+#Bcell_expression <- Bcell_expression[-1, ]
+#Bcell_expression[is.na(Bcell_expression)] <- 0
+#Bcell_expression[] <- lapply(Bcell_expression, function(x) 
+    #if (is.character(x) || is.factor(x)) as.numeric(as.character(x)) else x)
+
+# Normalize the values based on each column
+#Bcell_normalized <- Bcell_expression
+#Bcell_normalized[, -1] <- lapply(Bcell_normalized[, -1], scale)
+#Bcell_normalized <- Bcell_normalized[, !apply(Bcell_normalized, 2, function(col) all(is.na(col)))]
+#head(Bcell_normalized)
+```
+
+
+
+```{r}
+# Normalize function to normalize each cell expression file from cibersortx
+normalize <- function(cell_expression) {
+  cell_expression <- as.data.frame(t(cell_expression), header=TRUE)
+  colnames(cell_expression) <- cell_expression[1, ]
+  cell_expression <- cell_expression[-1, ]
+  cell_expression[] <- lapply(cell_expression, function(x) 
+    if (is.character(x) || is.factor(x)) as.numeric(as.character(x)) else x)
+  
+  for(column in names(cell_expression)) {
+      
+      cell_expression[[column]] <- as.numeric(cell_expression[[column]])
+      # Calculate the mean of the column, excluding NA values
+      median_value <- median(cell_expression[[column]], na.rm = TRUE)
+      
+      # Replace NA values in the column with the mean value
+      cell_expression[[column]][is.na(cell_expression[[column]])] <- median_value
+  }
+  
+  # Identify columns where all values are NA
+  columns_all_na <- apply(cell_expression, 2, function(x) all(is.na(x)))
+  # Remove these columns from the dataset
+  cell_expression <- cell_expression[, !columns_all_na]
+  
+  cell_normalized <- cell_expression
+  # Normalize the values based on each column
+  cell_normalized[, -1] <- lapply(cell_expression[, -1], scale)
+  cell_normalized[-1] <- as.data.frame(lapply(cell_normalized[-1], function(x) {
+    x[is.na(x)] <- 0
+    return(x)
+  }))
+  
+  return(cell_normalized)
+}
+
+Bcell_normalized <- normalize(Bcell_expression)
+Tcell_normalized <- normalize(Tcell_expression)
+Monocytes_normalized <- normalize(Monocytes_expression)
+Treg_normalized <- normalize(Treg_expression)
+```
+
+
+# Combinatorial Gene Effect (Ligand-Receptor) for REMI Interactome Analysis
+# Z Score Normaliation Method
+```{r}
+# c(CR_3m_1130_edge, CR_6m_1130_edge, PD_3m_1130_edge, PD_6m_1130_edge)
+# c(CR_3m_0125_edge, CR_6m_0125_edge, PD_3m_0125_edge, PD_6m_0125_edge)
+
+variable = CR_3m_1130_edge
+for (i in 1:nrow(variable)) {
+  
+  cell1 = variable[i, 3]
+  gene1 = variable[i, 4]
+  cell2 = variable[i, 5]
+  gene2 = variable[i, 6]
+  
+  celltype_file1 <- Tcell_normalized
+  if(cell1 == "B.cell") {
+    celltype_file1 <- Bcell_normalized
+  } else if(cell1 == "Myeloid.DC") {
+    celltype_file1 <- Monocytes_normalized
+  } else if(cell1 == "CAR.T.reg") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "CAR.T.cell") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "T.cell") {
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "Endo.T.cell"
+  } else if(cell1 == "T.reg"){
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "Endo.T.reg"
+  } else { 
+    celltype_file1 <- Tcell_normalized
+    Cell1 <- "Unknown"
+  }
+  
+  celltype_file2 <- Tcell_normalized
+  if(cell2 == "B.cell") {
+    celltype_file2 <- Bcell_normalized
+  } else if(cell2 == "Myeloid.DC") {
+    celltype_file2 <- Monocytes_normalized
+  } else if(cell2 == "CAR.T.reg") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "CAR.T.cell") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "T.cell") {
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "Endo.T.cell"
+  } else if(cell2 == "T.reg"){
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "Endo.T.reg"
+  } else { 
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "Unknown"
+  }
+  
+  if(!gene1 %in% names(celltype_file1) | !gene2 %in% names(celltype_file2)) {
+    next
+  }
+
+  genepair_df <- data.frame(
+    gene1 = celltype_file1[gene1]
+  )
+  
+  genepair_df <- merge(genepair_df, celltype_file2[gene2], by="row.names")
+  genepair_df[[2]] <- as.numeric(genepair_df[[2]])
+  genepair_df[[3]] <- as.numeric(genepair_df[[3]])
+  genepair_df$sum <- (genepair_df[[2]] + genepair_df[[3]])/2
+  
+  median <- median(genepair_df[['sum']])
+  genepair_df$strata <- ifelse(genepair_df[['sum']] > median, "High", "Low")
+  
+  genepair_df <- merge(genepair_df, survival_df, by.x="Row.names", by.y="PatientID")
+  head(genepair_df)
+  
+  if(length(unique(genepair_df$sum)) == 1) {
+    next
+  }
+  
+  fit <- survfit(Surv(Time, Status) ~ strata, data = genepair_df, conf.int = 0.95)
+  
+  p <- ggsurvplot(fit, data=genepair_df, size=1,  palette=c("#E7B800", "#2E9FDF"), conf.int=TRUE, pval=TRUE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.25, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Survival Probability", conf.int.style = "step", risk.table.title="Number at risk") + ggtitle(paste("SurvPlot of", gene1, "_", cell1, "|", gene2, "_", cell2))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3, 1))
+  
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Survival_Plot.png"), p, width=10, height=6)
+  
+  
+  
+   # Cox regression
+  cox_model <- coxph(Surv(Time, Status) ~ strata, data = genepair_df)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=genepair_df)
+  # Extract HR value
+  # hr <- 0
+  # label <- "High"
+  # hr_high <- exp(coef(cox_model)['Expression_LevelHigh'])
+  # hr_low <- exp(coef(cox_model)['Expression_LevelLow'])
+  # if(is.na(hr_high) == TRUE) { hr <- hr_low; label <- "Low"}
+  # else { hr <- hr_high; label <- "High" }
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Regression of", gene1, "_", cell1, "|", gene2, "_", cell2)) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Cox_Regression.png"), g$plot, width=10, height=6)
+  
+}
+```
+
+
+# TEST for REMI
+```{r}
+#  cell1 = CR_3m_1130_edge[1, 3]
+#  gene1 = CR_3m_1130_edge[1, 4]
+#  cell2 = CR_3m_1130_edge[1, 5]
+#  gene2 = CR_3m_1130_edge[1, 6]
+
+  gene1 = "RIMS1"
+  gene2 = "CACNA1C"
+  cell1 = "T.cell"
+  cell2 = "T.cell"
+  
+  celltype_file1 <- Tcell_normalized
+  if(cell1 == "B.cell") {
+    celltype_file1 <- Bcell_normalized
+  } else if(cell1 == "Myeloid.DC") {
+    celltype_file1 <- Monocytes_normalized
+  } else if(cell1 == "CAR.T.reg") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "CAR.T.cell") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "T.cell") {
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "Endo.T.cell"
+  } else if(cell1 == "T.reg"){
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "Endo.T.reg"
+  } else { 
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "Unknown"
+  }
+  
+  celltype_file2 <- Tcell_normalized
+  if(cell2 == "B.cell") {
+    celltype_file2 <- Bcell_normalized
+  } else if(cell2 == "Myeloid.DC") {
+    celltype_file2 <- Monocytes_normalized
+  } else if(cell2 == "CAR.T.reg") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "CAR.T.cell") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "T.cell") {
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "Endo.T.cell"
+  } else if(cell2 == "T.reg"){
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "Endo.T.reg"
+  } else { 
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "Unknown"
+  }
+  
+  if(!gene1 %in% names(celltype_file1) | !gene2 %in% names(celltype_file2)) {
+    stop("Throw an error here since gene not found.")
+  }
+
+  genepair_df <- data.frame(
+    gene1 = celltype_file1[gene1]
+  )
+  
+  genepair_df <- merge(genepair_df, celltype_file2[gene2], by="row.names")
+  genepair_df[[2]] <- as.numeric(genepair_df[[2]])
+  genepair_df[[3]] <- as.numeric(genepair_df[[3]])
+  genepair_df$sum <- (genepair_df[[2]] + genepair_df[[3]])/2.0
+  
+  if(length(unique(genepair_df$sum)) == 1) {
+    print("checkpoint")
+  }
+  
+  median <- median(genepair_df[['sum']])
+  genepair_df$strata <- ifelse(genepair_df[['sum']] < median, "Low", "High")
+  
+  genepair_df <- merge(genepair_df, survival_df, by.x="Row.names", by.y="PatientID")
+  head(genepair_df)
+  
+  fit <- survfit(Surv(Time, Status) ~ strata, data = genepair_df, conf.int = 0.95)
+  
+  p <- ggsurvplot(fit, data=genepair_df, size=1,  palette=c("#E7B800", "#2E9FDF"), conf.int=TRUE, pval=TRUE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.25, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Survival Probability", conf.int.style = "step", risk.table.title="Number at risk") + ggtitle(paste("SurvPlot of", gene1, "in", cell1, "and", gene2, "in", cell2))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3, 1))
+  
+  print(p)
+
+  ggsave(filename=paste0("../Survival_Plots/", gene1, "_", gene2, "_Survival_Plot.png"), p, width=10, height=6)
+  
+  head(genepair_df, 50)
+  median
+
+```
+
+# CellPhoneDB
+
+```{r}
+# Base_v1.0, Treg_v2.0, CAR_v3.0
+choice <- "CAR_v3.0"
+
+cdb_30d_CR <- read.table(paste0("../CellPhoneDB_Results/", choice, "/30d/CR/significant_means.txt"), sep="\t", header=TRUE)
+cdb_30d_PD <- read.table(paste0("../CellPhoneDB_Results/", choice, "/30d/PD/significant_means.txt"), sep="\t", header=TRUE)
+cdb_3m_CR <- read.table(paste0("../CellPhoneDB_Results/", choice, "/3m/CR/significant_means.txt"), sep="\t", header=TRUE)
+cdb_3m_PD <- read.table(paste0("../CellPhoneDB_Results/", choice, "/3m/PD/significant_means.txt"), sep="\t", header=TRUE)
+cdb_6m_CR <- read.table(paste0("../CellPhoneDB_Results/", choice, "/6m/CR/significant_means.txt"), sep="\t", header=TRUE)
+cdb_6m_PD <- read.table(paste0("../CellPhoneDB_Results/", choice, "/6m/PD/significant_means.txt"), sep="\t", header=TRUE)
+
+survival_type = "PFI"
+survival_df <- survival_analysis_model(bulk_metadata, survival_type, check_times, gene_list = final_gene_list)
+```
+
+
+```{r}
+# cdb_30d_CR, cdb_30d_PD, cdb_3m_CR, cdb_3m_PD, cdb_6m_CR, cdb_6m_PD
+subset <- cdb_6m_PD %>% select(-c(1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13))
+node_list <- data.frame(
+  gene_a = character(0),
+  gene_b = character(0),
+  interaction = character(0)
+)
+
+for(i in 1:nrow(subset)) {
+  a = subset[i, 1]
+  b = subset[i, 2]
+  for(j in 1:ncol(subset)) {
+    if(is.character(subset[i, j])) {
+      next()
+    }
+    if(is.na(subset[i, j])) {
+      next()
+    }
+    new_row <- data.frame(
+      gene_a = a,
+      gene_b = b,
+      interaction = colnames(subset)[j]
+    )
+    node_list <- rbind(node_list, new_row)
+  }
+}
+
+# Function to split by the middle period
+split_interaction <- function(interaction) {
+  parts <- unlist(strsplit(interaction, "_", fixed = TRUE)) # Split by underscore
+  left <- parts[1]   # First part of the split
+  right <- if (length(parts) > 1) parts[2] else "" # Second part if it exists, else empty string
+  c(left, right)
+}
+
+split_columns <- t(sapply(node_list$interaction, split_interaction))
+node_list$interaction_left <- split_columns[, 1]
+node_list$interaction_right <- split_columns[, 2]
+node_list$interaction <- NULL
+
+results <- data.frame(
+  'Celltype1' = character(0),    # Empty integer column
+  'Gene1' = character(0),    # Empty numeric column
+  'Celltype2' = character(0),
+  'Gene2' = character(0),
+  'KM_pvalue' = numeric(0),  # Empty character column
+  'hr' = numeric(0),      # Empty factor column
+  'hr_pvalue' = numeric(0),
+  stringsAsFactors = FALSE   # Prevent automatic conversion of strings to factors
+)
+
+for(i in 1:nrow(node_list)){
+  gene1 <- node_list[i, 1]
+  gene2 <- node_list[i, 2]
+  cell1 <- node_list[i, 3]
+  cell2 <- node_list[i, 4]
+  
+  celltype_file1 <- Tcell_normalized
+  if(cell1 == "B.cell") {
+    celltype_file1 <- Bcell_normalized
+  } else if(cell1 == "Myeloid.DC") {
+    celltype_file1 <- Monocytes_normalized
+  } else if(cell1 == "CAR1.Tcon") {
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "CAR+ Tcon"
+  } else if(cell1 == "CAR1.Treg") {
+    celltype_file1 <- Treg_normalized
+    cell1 <- "CAR+ Treg"
+  } else if(cell1 == "CAR0.Tcon") {
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "CAR- Tcon"
+  } else if(cell1 == "CAR0.Treg") {
+    celltype_file1 <- Treg_normalized
+    cell1 <- "CAR- Treg"
+  } else {
+    celltype_file1 <- Tcell_normalized
+    cell1 = "Unknown"
+  }
+  
+  celltype_file2 <- Tcell_normalized
+  if(cell2 == "B.cell") {
+    celltype_file2 <- Bcell_normalized
+  } else if(cell2 == "Myeloid.DC") {
+    celltype_file2 <- Monocytes_normalized
+  } else if(cell2 == "CAR1.Tcon") {
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "CAR+ Tcon"
+  } else if(cell2 == "CAR1.Treg") {
+    celltype_file2 <- Treg_normalized
+    cell2 <- "CAR+ Treg"
+  } else if(cell2 == "CAR0.Tcon") {
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "CAR- Tcon"
+  } else if(cell2 == "CAR0.Treg") {
+    celltype_file2 <- Treg_normalized
+    cell2 <- "CAR- Treg"
+  } else {
+    celltype_file2 <- Tcell_normalized
+    cell2 = "Unknown"
+  }
+  
+  if(!gene1 %in% names(celltype_file1) | !gene2 %in% names(celltype_file2)) {
+    next
+  }
+  
+  genepair_df <- data.frame(
+    gene1 = celltype_file1[gene1]
+  )
+  
+  genepair_df <- merge(genepair_df, celltype_file2[gene2], by="row.names")
+  genepair_df[[2]] <- as.numeric(genepair_df[[2]])
+  genepair_df[[3]] <- as.numeric(genepair_df[[3]])
+  genepair_df$sum <- genepair_df[[2]] + genepair_df[[3]]
+  
+  median <- median(genepair_df[['sum']])
+  genepair_df$strata <- ifelse(as.numeric(genepair_df[['sum']]) > median, "High", "Low")
+  
+  genepair_df <- merge(genepair_df, survival_df, by.x="Row.names", by.y="PatientID")
+  head(genepair_df)
+  
+  if(length(unique(genepair_df$sum)) == 1) {
+    next
+  }
+  
+  fit <- survfit(Surv(Time, Status) ~ strata, data = genepair_df, conf.int = 0.95)
+  
+  logrank_test <- survdiff(Surv(Time, Status) ~ strata, data = genepair_df)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+  p <- ggsurvplot(fit, data=genepair_df, size=1,  palette=c("#E7B800", "#2E9FDF"), conf.int=TRUE, pval=TRUE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.25, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Survival Probability", conf.int.style = "step", risk.table.title="Number at risk") + ggtitle(paste("SurvPlot of", gene1, "_", cell1, "|", gene2, "_", cell2))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3, 1))
+  
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Survival_Plot.png"), p, width = 10, height = 6)
+  
+  
+  
+  
+  
+  # Cox regression
+  cox_model <- coxph(Surv(Time, Status) ~ strata, data = genepair_df)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=genepair_df)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Regression of", gene1, "_", cell1, "|", gene2, "_", cell2)) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Cox_Regression.png"), g$plot, width = 10, height = 6)
+  
+  new_data <- data.frame(
+      Celltype1 = cell1,  # some numeric data
+      Gene1 = gene1,  # some character data
+      Celltype2 = cell2, 
+      Gene2 = gene2,
+      KM_pvalue = p_val,  # some factor data
+      hr = hr[1],
+      hr_pvalue = hr_pvalue
+    )
+    results <- rbind(results, new_data)
+  
+}
+
+results <- results[order(results$KM_pvalue, decreasing = FALSE), ]
+write.table(results, file = "../Survival_Plots/a_results.txt", sep = "\t",
+            row.names = FALSE, col.names = TRUE)
+write.csv(results, file = "../Survival_Plots/a_results.csv",
+          row.names = FALSE)
+```
+
+
+# CellChat
+
+```{r}
+# survtypes <- c("OS", "DSS", "DFI", "PFI")
+survival_type = "PFI"
+survival_df <- survival_analysis_model(bulk_metadata, survival_type, check_times, gene_list = final_gene_list)
+
+# Base_v1.0, Treg_v2.0, CAR_v3.0
+choice <- "CAR_v3.0"
+
+cellchat_30d_CR <- read.csv(paste0("../CellChat_Results/", choice, "/Response_30d/CR_30d.csv"))
+cellchat_30d_PD <- read.csv(paste0("../CellChat_Results/", choice, "/Response_30d/PD_30d.csv"))
+cellchat_3m_CR <- read.csv(paste0("../CellChat_Results/", choice, "/Response_3m/CR_3m.csv"))
+cellchat_3m_PD <- read.csv(paste0("../CellChat_Results/", choice, "/Response_3m/PD_3m.csv"))
+cellchat_6m_CR <- read.csv(paste0("../CellChat_Results/", choice, "/Response_6m/CR_6m.csv"))
+cellchat_6m_PD <- read.csv(paste0("../CellChat_Results/", choice, "/Response_6m/PD_6m.csv"))
+```
+
+
+
+```{r}
+# cellchat_30d_CR, cellchat_30d_PD
+# cellchat_3m_CR, cellchat_3m_PD
+# cellchat_6m_CR, cellchat_6m_PD
+df <- cellchat_6m_PD
+df <- df[, 1:4]
+
+results <- data.frame(
+  'Celltype1' = character(0),    # Empty integer column
+  'Gene1' = character(0),    # Empty numeric column
+  'Celltype2' = character(0),
+  'Gene2' = character(0),
+  'KM_pvalue' = numeric(0),  # Empty character column
+  'hr' = numeric(0),      # Empty factor column
+  'hr_pvalue' = numeric(0),
+  stringsAsFactors = FALSE   # Prevent automatic conversion of strings to factors
+)
+
+for (i in 1:nrow(df)) {
+  
+  cell1 = df[i, 1]
+  gene1 = df[i, 3]
+  cell2 = df[i, 2]
+  gene2 = df[i, 4]
+  
+  celltype_file1 <- Tcell_normalized
+  if(cell1 == "B cell") {
+    celltype_file1 <- Bcell_normalized
+  } else if(cell1 == "Myeloid DC") {
+    celltype_file1 <- Monocytes_normalized
+  } else if(cell1 == "CAR+ Tcon") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "CAR+ Treg") {
+    celltype_file1 <- Treg_normalized
+  } else if(cell1 == "CAR- Tcon") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "CAR- Treg"){
+    celltype_file1 <- Treg_normalized
+  } else { 
+    Cell1 <- "Unknown"
+  }
+  
+  celltype_file2 <- Tcell_normalized
+  if(cell2 == "B cell") {
+    celltype_file2 <- Bcell_normalized
+  } else if(cell2 == "Myeloid DC") {
+    celltype_file2 <- Monocytes_normalized
+  } else if(cell2 == "CAR+ Tcon") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "CAR+ Treg") {
+    celltype_file2 <- Treg_normalized
+  } else if(cell2 == "CAR- Tcon") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "CAR- Treg"){
+    celltype_file2 <- Treg_normalized
+  } else { 
+    cell2 <- "Unknown"
+  }
+  
+  if(!gene1 %in% names(celltype_file1) | !gene2 %in% names(celltype_file2)) {
+    next
+  }
+
+  genepair_df <- data.frame(
+    gene1 = celltype_file1[gene1]
+  )
+  
+  genepair_df <- merge(genepair_df, celltype_file2[gene2], by="row.names")
+  genepair_df[[2]] <- as.numeric(genepair_df[[2]])
+  genepair_df[[3]] <- as.numeric(genepair_df[[3]])
+  genepair_df$sum <- (genepair_df[[2]] + genepair_df[[3]])/2
+  
+  median <- median(genepair_df[['sum']])
+  genepair_df$strata <- ifelse(as.numeric(genepair_df[['sum']]) > median, "High", "Low")
+  
+  genepair_df <- merge(genepair_df, survival_df, by.x="Row.names", by.y="PatientID")
+  
+  if(length(unique(genepair_df$sum)) == 1) {
+    next
+  }
+  
+  fit <- survfit(Surv(Time, Status) ~ strata, data = genepair_df, conf.int = 0.95)
+  
+  logrank_test <- survdiff(Surv(Time, Status) ~ strata, data = genepair_df)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+  p <- ggsurvplot(fit, data=genepair_df, size=1,  palette=c("#E7B800", "#2E9FDF"), conf.int=TRUE, pval=TRUE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.25, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Survival Probability", conf.int.style = "step", risk.table.title="Number at risk") + ggtitle(paste("SurvPlot of", gene1, "_", cell1, "|", gene2, "_", cell2))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3, 1))
+  
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Survival_Plot.png"), p, width=10, height=6)
+  
+  
+  
+   # Cox regression
+  cox_model <- coxph(Surv(Time, Status) ~ strata, data = genepair_df)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=genepair_df)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Regression of", gene1, "_", cell1, "|", gene2, "_", cell2)) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Cox_Regression.png"), g$plot, width=10, height=6)
+  
+  
+  new_data <- data.frame(
+      Celltype1 = cell1,  # some numeric data
+      Gene1 = gene1,  # some character data
+      Celltype2 = cell2, 
+      Gene2 = gene2,
+      KM_pvalue = p_val,  # some factor data
+      hr = hr[1],
+      hr_pvalue = hr_pvalue
+    )
+    results <- rbind(results, new_data)
+  
+}
+
+results <- results[order(results$KM_pvalue, decreasing = FALSE), ]
+write.table(results, file = "../Survival_Plots/a_results.txt", sep = "\t",
+            row.names = FALSE, col.names = TRUE)
+write.csv(results, file = "../Survival_Plots/a_results.csv",
+          row.names = FALSE)
+```
+
+
+
+
+# Rank Order Method
+```{r}
+# Extract the T cell expression data from CIBERSORTx
+#Tcell_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART/CIBERSORTx_ImputeGeneExpression_MixReference2.0/CIBERSORTxHiRes_Job59_T_Window20.txt")
+#Bcell_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART/CIBERSORTx_ImputeGeneExpression_MixReference2.0/CIBERSORTxHiRes_Job59_B_Window20.txt")
+#Monocytes_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART/CIBERSORTx_ImputeGeneExpression_MixReference2.0/CIBERSORTxHiRes_Job59_Monocytes_Window20.txt")
+#NK_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART/CIBERSORTx_ImputeGeneExpression_MixReference2.0/CIBERSORTxHiRes_Job59_NK_Window20.txt")
+#pDC_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART/CIBERSORTx_ImputeGeneExpression_MixReference2.0/CIBERSORTxHiRes_Job59_pDC_Window20.txt")
+
+
+Tcell_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs/CIBERSORTx_ImputeGeneExpression_MixReference2.0_Tregs/CIBERSORTxHiRes_Job62_T_Window24.txt")
+Bcell_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs/CIBERSORTx_ImputeGeneExpression_MixReference2.0_Tregs/CIBERSORTxHiRes_Job62_B_Window24.txt")
+Monocytes_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs/CIBERSORTx_ImputeGeneExpression_MixReference2.0_Tregs/CIBERSORTxHiRes_Job62_Monocytes_Window24.txt")
+NK_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs/CIBERSORTx_ImputeGeneExpression_MixReference2.0_Tregs/CIBERSORTxHiRes_Job62_NK_Window24.txt")
+pDC_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs/CIBERSORTx_ImputeGeneExpression_MixReference2.0_Tregs/CIBERSORTxHiRes_Job62_pDC_Window24.txt")
+Treg_expression <- read.delim("../CIBERSORTx_Deconvolution_pre_CART_Tregs/CIBERSORTx_ImputeGeneExpression_MixReference2.0_Tregs/CIBERSORTxHiRes_Job62_Tregs_Window24.txt")
+```
+
+
+```{r}
+REMI_Format <- function(file) {
+  # Split the 'node1' column into two separate columns based on the "_" delimiter
+  file <- transform(file, 
+                    node1_cell = sapply(strsplit(as.character(node1), "_"), `[`, 1),
+                    node1_gene = sapply(strsplit(as.character(node1), "_"), `[`, 2))
+  file$node1 <- NULL
+  
+  # Split the 'node2' column into two separate columns based on the "_" delimiter
+  file <- transform(file, 
+                    node2_cell = sapply(strsplit(as.character(node2), "_"), `[`, 1),
+                    node2_gene = sapply(strsplit(as.character(node2), "_"), `[`, 2))
+  file$node2 <- NULL
+  return(file)
+}
+
+CR_3m_1130_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-20221130/20221130_3m_CR_edge_list.csv")
+CR_6m_1130_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-20221130/20221130_6m_CR_edge_list.csv")
+PD_3m_1130_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-20221130/20221130_3m_PD_edge_list.csv")
+PD_6m_1130_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-20221130/20221130_6m_PD_edge_list.csv")
+CR_3m_0125_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-Tregs-20230125/3m/20230125_3m_CR_edge_list.csv")
+CR_6m_0125_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-Tregs-20230125/6m/20230125_6m_CR_edge_list.csv")
+PD_3m_0125_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-Tregs-20230125/3m/20230125_3m_PD_edge_list.csv")
+PD_6m_0125_edge <- read.csv("../Interactome_Analysis_Results/v6-wCAR-Tregs-20230125/6m/20230125_6m_PD_edge_list.csv")
+
+CR_3m_1130_edge <- REMI_Format(CR_3m_1130_edge)
+CR_6m_1130_edge <- REMI_Format(CR_6m_1130_edge)
+PD_3m_1130_edge <- REMI_Format(PD_3m_1130_edge)
+PD_6m_1130_edge <- REMI_Format(PD_6m_1130_edge)
+CR_3m_0125_edge <- REMI_Format(CR_3m_0125_edge)
+CR_6m_0125_edge <- REMI_Format(CR_6m_0125_edge)
+PD_3m_0125_edge <- REMI_Format(PD_3m_0125_edge)
+PD_6m_0125_edge <- REMI_Format(PD_6m_0125_edge)
+```
+
+
+```{r}
+# Normalize function to normalize each cell expression file from cibersortx
+order_rank <- function(cell_expression) {
+  cell_expression <- as.data.frame(t(cell_expression), header=TRUE)
+  colnames(cell_expression) <- cell_expression[1, ]
+  cell_expression <- cell_expression[-1, ]
+  genepair_df[[2]] <- as.numeric(genepair_df[[2]])
+  for(column in names(cell_expression)) {
+    
+      cell_expression[[column]] <- as.numeric(cell_expression[[column]])
+      # Calculate the mean of the column, excluding NA values
+      mean_value <- mean(cell_expression[[column]], na.rm = TRUE)
+      
+      # Replace NA values in the column with the mean value
+      cell_expression[[column]][is.na(cell_expression[[column]])] <- mean_value
+  }
+  
+  # Identify columns where all values are NA
+  columns_all_na <- apply(cell_expression, 2, function(x) all(is.na(x)))
+  # Remove these columns from the dataset
+  cell_expression <- cell_expression[, !columns_all_na]
+  
+  #cell_normalized <- cell_normalized[, !apply(cell_normalized, 2, function(col) all(is.na(col)))]
+  
+  return(cell_expression)
+}
+
+Bcell_normalized <- order_rank(Bcell_expression)
+Tcell_normalized <- order_rank(Tcell_expression)
+Monocytes_normalized <- order_rank(Monocytes_expression)
+Treg_normalized <- order_rank(Treg_expression)
+```
+
+# REMI
+```{r}
+# c(CR_3m_1130_edge, CR_6m_1130_edge, PD_3m_1130_edge, PD_6m_1130_edge)
+# c(CR_3m_0125_edge, CR_6m_0125_edge, PD_3m_0125_edge, PD_6m_0125_edge)
+
+variable = PD_6m_0125_edge
+for (i in 1:nrow(variable)) {
+  
+  cell1 = variable[i, 3]
+  gene1 = variable[i, 4]
+  cell2 = variable[i, 5]
+  gene2 = variable[i, 6]
+  
+  celltype_file1 <- Tcell_normalized
+  if(cell1 == "B.cell") {
+    celltype_file1 <- Bcell_normalized
+  } else if(cell1 == "Myeloid.DC") {
+    celltype_file1 <- Monocytes_normalized
+  } else if(cell1 == "CAR.T.reg") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "CAR.T.cell") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "T.cell") {
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "Endo.T.cell"
+  } else if(cell1 == "T.reg"){
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "Endo.T.reg"
+  } else { 
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "Unknown"
+  }
+  
+  celltype_file2 <- Tcell_normalized
+  if(cell2 == "B.cell") {
+    celltype_file2 <- Bcell_normalized
+  } else if(cell2 == "Myeloid.DC") {
+    celltype_file2 <- Monocytes_normalized
+  } else if(cell2 == "CAR.T.reg") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "CAR.T.cell") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "T.cell") {
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "Endo.T.cell"
+  } else if(cell2 == "T.reg"){
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "Endo.T.reg"
+  } else { 
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "Unknown"
+  }
+  
+  if(!gene1 %in% names(celltype_file1) | !gene2 %in% names(celltype_file2)) {
+    next
+  }
+
+  genepair_df <- data.frame(
+    gene1 = celltype_file1[gene1]
+  )
+  genepair_df <- merge(genepair_df, celltype_file2[gene2], by="row.names")
+  
+  genepair_df[[2]] <- as.numeric(genepair_df[[2]])
+  genepair_df[[3]] <- as.numeric(genepair_df[[3]])
+  
+  if(length(unique(genepair_df[[2]])) == 1 & length(unique(genepair_df[[3]])) == 1) {
+    next
+  }
+  
+  if(gene1 == "PROK2" & gene2 == "PROKR2" & cell1 == cell2) {
+    next
+  }
+  
+  ordered_list1 <- sort(genepair_df[[2]], decreasing=TRUE)
+  genepair_df$rank1 <- match(genepair_df[,2], ordered_list1) #REVISE
+  ordered_list2 <- sort(genepair_df[[3]], decreasing=TRUE)
+  genepair_df$rank2 <- match(genepair_df[,3], ordered_list2) #REVISE
+  genepair_df$rank_avg <- (genepair_df$rank1 + genepair_df$rank2)/2
+  
+  median <- median(genepair_df[['rank_avg']])
+  genepair_df$strata <- ifelse(as.numeric(genepair_df[['rank_avg']]) >= median, "Low", "High")
+  
+  genepair_df <- merge(genepair_df, survival_df, by.x="Row.names", by.y="PatientID")
+
+  
+  fit <- survfit(Surv(Time, Status) ~ strata, data = genepair_df, conf.int = 0.95)
+  
+  p <- ggsurvplot(fit, data=genepair_df, size=1,  palette=c("#E7B800", "#2E9FDF"), conf.int=TRUE, pval=TRUE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.25, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Survival Probability", conf.int.style = "step", risk.table.title="Number at risk") + ggtitle(paste("SurvPlot of", gene1, "in", cell1, "|", gene2, "in", cell2))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3, 1))
+  
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Survival_Plot.png"), p, width=10, height=6)
+  
+  
+  
+   # Cox regression
+  cox_model <- coxph(Surv(Time, Status) ~ strata, data = genepair_df)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=genepair_df)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of", gene1, "in", cell1, "|", gene2, "in", cell2)) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Cox_Regression.png"), g$plot, width=10, height=6)
+  
+}
+```
+
+
+#TEST
+```{r}
+
+  gene1 <- "RIMS1"
+  cell1 <- "T.cell"
+  gene2 <- "CACNA1C"
+  cell2 <- "T.cell"
+  
+  celltype_file1 <- Tcell_normalized
+  if(cell1 == "B.cell") {
+    celltype_file1 <- Bcell_normalized
+  } else if(cell1 == "Myeloid.DC") {
+    celltype_file1 <- Monocytes_normalized
+  } else if(cell1 == "CAR.T.reg") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "CAR.T.cell") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "T.cell") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "T.reg"){
+    celltype_file1 <- Tcell_normalized
+  } else { 
+    celltype_file1 <- Tcell_normalized
+  }
+  
+  celltype_file2 <- Tcell_normalized
+  if(cell2 == "B.cell") {
+    celltype_file2 <- Bcell_normalized
+  } else if(cell2 == "Myeloid.DC") {
+    celltype_file2 <- Monocytes_normalized
+  } else if(cell2 == "CAR.T.reg") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "CAR.T.cell") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "T.cell") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "T.reg"){
+    celltype_file2 <- Tcell_normalized
+  } else { 
+    celltype_file2 <- Tcell_normalized
+  }
+  
+  if(!gene1 %in% names(celltype_file1) | !gene2 %in% names(celltype_file2)) {
+    next
+  }
+
+  genepair_df <- data.frame(
+    gene1 = celltype_file1[gene1]
+  )
+  genepair_df <- merge(genepair_df, celltype_file2[gene2], by="row.names")
+  
+  genepair_df[[2]] <- as.numeric(genepair_df[[2]])
+  genepair_df[[3]] <- as.numeric(genepair_df[[3]])
+  
+  if(length(unique(genepair_df[[2]])) == 1 & length(unique(genepair_df[[3]])) == 1) {
+    next
+  }
+  
+  ordered_list1 <- sort(genepair_df[[2]], decreasing=TRUE)
+  genepair_df$rank1 <- match(genepair_df[,2], ordered_list1) #REVISE
+  ordered_list2 <- sort(genepair_df[[3]], decreasing=TRUE)
+  genepair_df$rank2 <- match(genepair_df[,3], ordered_list2) #REVISE
+  genepair_df$rank_avg <- (genepair_df$rank1 + genepair_df$rank2)/2
+  
+  median <- median(genepair_df[['rank_avg']])
+  genepair_df$strata <- ifelse(genepair_df[['rank_avg']] > median, "Low", "High")
+  
+  genepair_df <- merge(genepair_df, survival_df, by.x="Row.names", by.y="PatientID")
+
+  
+  fit <- survfit(Surv(Time, Status) ~ strata, data = genepair_df, conf.int = 0.95)
+  
+  p <- ggsurvplot(fit, data=genepair_df, size=1,  palette=c("#E7B800", "#2E9FDF"), conf.int=TRUE, pval=TRUE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.25, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Survival Probability", conf.int.style = "step", risk.table.title="Number at risk") + ggtitle(paste("SurvPlot of", gene1, "in", cell1, "|", gene2, "in", cell2))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3, 1))
+  
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Survival_Plot.png"), p, width=10, height=6)
+  
+  
+  
+   # Cox regression
+  cox_model <- coxph(Surv(Time, Status) ~ strata, data = genepair_df)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=genepair_df)
+  # Extract HR value
+  # hr <- 0
+  # label <- "High"
+  # hr_high <- exp(coef(cox_model)['Expression_LevelHigh'])
+  # hr_low <- exp(coef(cox_model)['Expression_LevelLow'])
+  # if(is.na(hr_high) == TRUE) { hr <- hr_low; label <- "Low"}
+  # else { hr <- hr_high; label <- "High" }
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  print(hr[1])  # Make sure to use the correct coefficient name here
+  
+  # Print the summary
+  print(summary_cox)
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  print(hr_pvalue)
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of", gene1, "in", cell1, "|", gene2, "in", cell2)) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Cox_Regression.png"), g$plot, width=10, height=6)
+  
+  head(genepair_df, 50)
+```
+
+
+# CellPhoneDB
+
+```{r}
+# Base_v1.0, Treg_v2.0, CAR_v3.0
+choice <- "CAR_v3.0"
+
+cdb_30d_CR <- read.table(paste0("../CellPhoneDB_Results/", choice, "/30d/CR/significant_means.txt"), sep="\t", header=TRUE)
+cdb_30d_PD <- read.table(paste0("../CellPhoneDB_Results/", choice, "/30d/PD/significant_means.txt"), sep="\t", header=TRUE)
+cdb_3m_CR <- read.table(paste0("../CellPhoneDB_Results/", choice, "/3m/CR/significant_means.txt"), sep="\t", header=TRUE)
+cdb_3m_PD <- read.table(paste0("../CellPhoneDB_Results/", choice, "/3m/PD/significant_means.txt"), sep="\t", header=TRUE)
+cdb_6m_CR <- read.table(paste0("../CellPhoneDB_Results/", choice, "/6m/CR/significant_means.txt"), sep="\t", header=TRUE)
+cdb_6m_PD <- read.table(paste0("../CellPhoneDB_Results/", choice, "/6m/PD/significant_means.txt"), sep="\t", header=TRUE)
+
+survival_type = "PFI"
+survival_df <- survival_analysis_model(bulk_metadata, survival_type, check_times, gene_list = final_gene_list)
+```
+
+```{r}
+#cdb_30d_CR, cdb_30d_PD, cdb_3m_CR, cdb_3m_PD, cdb_6m_CR, cdb_6m_PD 
+subset <- cdb_6m_PD %>% select(-c(1, 2, 3, 4, 7, 8, 9, 10, 11, 12, 13))
+node_list <- data.frame(
+  gene_a = character(0),
+  gene_b = character(0),
+  interaction = character(0)
+)
+
+for(i in 1:nrow(subset)) {
+  a = subset[i, 1]
+  b = subset[i, 2]
+  for(j in 1:ncol(subset)) {
+    if(is.character(subset[i, j])) {
+      next()
+    }
+    if(is.na(subset[i, j])) {
+      next()
+    }
+    new_row <- data.frame(
+      gene_a = a,
+      gene_b = b,
+      interaction = colnames(subset)[j]
+    )
+    node_list <- rbind(node_list, new_row)
+  }
+}
+
+# Function to split by the middle period
+split_interaction <- function(interaction) {
+  parts <- unlist(strsplit(interaction, "_", fixed = TRUE)) # Split by underscore
+  left <- parts[1]   # First part of the split
+  right <- if (length(parts) > 1) parts[2] else "" # Second part if it exists, else empty string
+  c(left, right)
+}
+
+split_columns <- t(sapply(node_list$interaction, split_interaction))
+node_list$interaction_left <- split_columns[, 1]
+node_list$interaction_right <- split_columns[, 2]
+node_list$interaction <- NULL
+
+results <- data.frame(
+  'Celltype1' = character(0),    # Empty integer column
+  'Gene1' = character(0),    # Empty numeric column
+  'Celltype2' = character(0),
+  'Gene2' = character(0),
+  'KM_pvalue' = numeric(0),  # Empty character column
+  'hr' = numeric(0),      # Empty factor column
+  'hr_pvalue' = numeric(0),
+  stringsAsFactors = FALSE   # Prevent automatic conversion of strings to factors
+)
+
+for(i in 1:nrow(node_list)){
+  gene1 <- node_list[i, 1]
+  gene2 <- node_list[i, 2]
+  cell1 <- node_list[i, 3]
+  cell2 <- node_list[i, 4]
+  
+  celltype_file1 <- Tcell_normalized
+  if(cell1 == "B.cell") {
+    celltype_file1 <- Bcell_normalized
+  } else if(cell1 == "Myeloid.DC") {
+    celltype_file1 <- Monocytes_normalized
+  } else if(cell1 == "CAR1.Tcon") {
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "CAR+ Tcon"
+  } else if(cell1 == "CAR1.Treg") {
+    celltype_file1 <- Treg_normalized
+    cell1 <- "CAR+ Treg"
+  } else if(cell1 == "CAR0.Tcon") {
+    celltype_file1 <- Tcell_normalized
+    cell1 <- "CAR- Tcon"
+  } else if(cell1 == "CAR0.Treg") {
+    celltype_file1 <- Treg_normalized
+    cell1 <- "CAR- Treg"
+  } else {
+    celltype_file1 <- Tcell_normalized
+    cell1 = "Unknown"
+  }
+  
+  celltype_file2 <- Tcell_normalized
+  if(cell2 == "B.cell") {
+    celltype_file2 <- Bcell_normalized
+  } else if(cell2 == "Myeloid.DC") {
+    celltype_file2 <- Monocytes_normalized
+  } else if(cell2 == "CAR1.Tcon") {
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "CAR+ Tcon"
+  } else if(cell2 == "CAR1.Treg") {
+    celltype_file2 <- Treg_normalized
+    cell2 <- "CAR+ Treg"
+  } else if(cell2 == "CAR0.Tcon") {
+    celltype_file2 <- Tcell_normalized
+    cell2 <- "CAR- Tcon"
+  } else if(cell2 == "CAR0.Treg") {
+    celltype_file2 <- Treg_normalized
+    cell2 <- "CAR- Treg"
+  } else {
+    celltype_file2 <- Tcell_normalized
+    cell2 = "Unknown"
+  }
+  
+  if(!gene1 %in% names(celltype_file1) | !gene2 %in% names(celltype_file2)) {
+    next
+  }
+  
+  genepair_df <- data.frame(
+    gene1 = celltype_file1[gene1]
+  )
+  genepair_df <- merge(genepair_df, celltype_file2[gene2], by="row.names")
+  
+  genepair_df[[2]] <- as.numeric(genepair_df[[2]])
+  genepair_df[[3]] <- as.numeric(genepair_df[[3]])
+  
+  if(length(unique(genepair_df[[2]])) == 1 & length(unique(genepair_df[[3]])) == 1) {
+    next
+  }
+  
+  ordered_list1 <- sort(genepair_df[[2]], decreasing=TRUE)
+  genepair_df$rank1 <- match(genepair_df[,2], ordered_list1) #REVISE
+  ordered_list2 <- sort(genepair_df[[3]], decreasing=TRUE)
+  genepair_df$rank2 <- match(genepair_df[,3], ordered_list2) #REVISE
+  genepair_df$rank_avg <- (genepair_df$rank1 + genepair_df$rank2)/2
+  
+  median <- median(genepair_df[['rank_avg']])
+  genepair_df$strata <- ifelse(as.numeric(genepair_df[['rank_avg']]) >= median, "Low", "High")
+  
+  genepair_df <- merge(genepair_df, survival_df, by.x="Row.names", by.y="PatientID")
+
+  
+  fit <- survfit(Surv(Time, Status) ~ strata, data = genepair_df, conf.int = 0.95)
+  
+  logrank_test <- survdiff(Surv(Time, Status) ~ strata, data = genepair_df)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+
+  
+  p <- ggsurvplot(fit, data=genepair_df, size=1,  palette=c("#E7B800", "#2E9FDF"), conf.int=TRUE, pval=TRUE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.25, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Survival Probability", conf.int.style = "step", risk.table.title="Number at risk") + ggtitle(paste("SurvPlot of", gene1, "in", cell1, "|", gene2, "in", cell2))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3, 1))
+  
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Survival_Plot.png"), p, width=10, height=6)
+  
+  
+  
+  
+  
+  # Cox regression
+  cox_model <- coxph(Surv(Time, Status) ~ strata, data = genepair_df)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=genepair_df)
+
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of", gene1, "in", cell1, "|", gene2, "in", cell2)) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Cox_Regression.png"), g$plot, width=10, height=6)
+  
+  new_data <- data.frame(
+      Celltype1 = cell1,  # some numeric data
+      Gene1 = gene1,  # some character data
+      Celltype2 = cell2, 
+      Gene2 = gene2,
+      KM_pvalue = p_val,  # some factor data
+      hr = hr[1],
+      hr_pvalue = hr_pvalue
+    )
+    results <- rbind(results, new_data)
+  
+}
+
+results <- results[order(results$KM_pvalue, decreasing = FALSE), ]
+write.table(results, file = "../Survival_Plots/a_results.txt", sep = "\t",
+            row.names = FALSE, col.names = TRUE)
+write.csv(results, file = "../Survival_Plots/a_results.csv",
+          row.names = FALSE)
+
+```
+
+
+# CellChat - Rank Order
+
+```{r}
+# survtypes <- c("OS", "DSS", "DFI", "PFI")
+survival_type = "PFI"
+survival_df <- survival_analysis_model(bulk_metadata, survival_type, check_times, gene_list = final_gene_list)
+
+# Base_v1.0, Treg_v2.0, CAR_v3.0
+choice <- "CAR_v3.0"
+
+cellchat_30d_CR <- read.csv(paste0("../CellChat_Results/", choice, "/Response_30d/CR_30d.csv"))
+cellchat_30d_PD <- read.csv(paste0("../CellChat_Results/", choice, "/Response_30d/PD_30d.csv"))
+
+cellchat_3m_CR <- read.csv(paste0("../CellChat_Results/", choice, "/Response_3m/CR_3m.csv"))
+cellchat_3m_PD <- read.csv(paste0("../CellChat_Results/", choice, "/Response_3m/PD_3m.csv"))
+
+cellchat_6m_CR <- read.csv(paste0("../CellChat_Results/", choice, "/Response_6m/CR_6m.csv"))
+cellchat_6m_PD <- read.csv(paste0("../CellChat_Results/", choice, "/Response_6m/PD_6m.csv"))
+```
+
+
+```{r}
+# cellchat_30d_CR, cellchat_30d_PD
+# cellchat_3m_CR, cellchat_3m_PD
+# cellchat_6m_CR, cellchat_6m_PD
+df = cellchat_6m_PD
+
+results <- data.frame(
+  'Celltype1' = character(0),    # Empty integer column
+  'Gene1' = character(0),    # Empty numeric column
+  'Celltype2' = character(0),
+  'Gene2' = character(0),
+  'KM_pvalue' = numeric(0),  # Empty character column
+  'hr' = numeric(0),      # Empty factor column
+  'hr_pvalue' = numeric(0),
+  stringsAsFactors = FALSE   # Prevent automatic conversion of strings to factors
+)
+
+for (i in 1:nrow(df)) {
+  
+  cell1 = df[i, 1]
+  gene1 = df[i, 3]
+  cell2 = df[i, 2]
+  gene2 = df[i, 4]
+  
+  celltype_file1 <- Tcell_normalized
+  if(cell1 == "B cell") {
+    celltype_file1 <- Bcell_normalized
+  } else if(cell1 == "Myeloid DC") {
+    celltype_file1 <- Monocytes_normalized
+  } else if(cell1 == "CAR+ Tcon") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "CAR+ Treg") {
+    celltype_file1 <- Treg_normalized
+  } else if(cell1 == "CAR- Tcon") {
+    celltype_file1 <- Tcell_normalized
+  } else if(cell1 == "CAR- Treg"){
+    celltype_file1 <- Treg_normalized
+  } else { 
+    cell1 <- "Unknown"
+  }
+  
+  celltype_file2 <- Tcell_normalized
+  if(cell2 == "B cell") {
+    celltype_file2 <- Bcell_normalized
+  } else if(cell2 == "Myeloid DC") {
+    celltype_file2 <- Monocytes_normalized
+  } else if(cell2 == "CAR+ Tcon") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "CAR+ Treg") {
+    celltype_file2 <- Treg_normalized
+  } else if(cell2 == "CAR- Tcon") {
+    celltype_file2 <- Tcell_normalized
+  } else if(cell2 == "CAR- Treg"){
+    celltype_file2 <- Treg_normalized
+  } else { 
+    cell2 <- "Unknown"
+  }
+  
+  if(!gene1 %in% names(celltype_file1) | !gene2 %in% names(celltype_file2)) {
+    next
+  }
+
+  genepair_df <- data.frame(
+    gene1 = celltype_file1[gene1]
+  )
+  genepair_df <- merge(genepair_df, celltype_file2[gene2], by="row.names")
+  
+  genepair_df[[2]] <- as.numeric(genepair_df[[2]])
+  genepair_df[[3]] <- as.numeric(genepair_df[[3]])
+  
+  if(length(unique(genepair_df[[2]])) == 1 & length(unique(genepair_df[[3]])) == 1) {
+    next
+  }
+  
+  if(gene1 == "PROK2" & gene2 == "PROKR2" & cell1 == cell2) {
+    next
+  }
+  
+  ordered_list1 <- sort(genepair_df[[2]], decreasing=TRUE)
+  genepair_df$rank1 <- match(genepair_df[,2], ordered_list1) #REVISE
+  ordered_list2 <- sort(genepair_df[[3]], decreasing=TRUE)
+  genepair_df$rank2 <- match(genepair_df[,3], ordered_list2) #REVISE
+  genepair_df$rank_avg <- (genepair_df$rank1 + genepair_df$rank2)/2
+  
+  median <- median(genepair_df[['rank_avg']])
+  genepair_df$strata <- ifelse(as.numeric(genepair_df[['rank_avg']]) >= median, "Low", "High")
+  
+  genepair_df <- merge(genepair_df, survival_df, by.x="Row.names", by.y="PatientID")
+
+  
+  fit <- survfit(Surv(Time, Status) ~ strata, data = genepair_df, conf.int = 0.95)
+  
+  logrank_test <- survdiff(Surv(Time, Status) ~ strata, data = genepair_df)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+  p <- ggsurvplot(fit, data=genepair_df, size=1,  palette=c("#E7B800", "#2E9FDF"), conf.int=TRUE, pval=TRUE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.25, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Survival Probability", conf.int.style = "step", risk.table.title="Number at risk") + ggtitle(paste("SurvPlot of", gene1, "in", cell1, "|", gene2, "in", cell2))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3, 1))
+  
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Survival_Plot.png"), p, width=10, height=6)
+  
+  
+  
+   # Cox regression
+  cox_model <- coxph(Surv(Time, Status) ~ strata, data = genepair_df)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=genepair_df)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of", gene1, "in", cell1, "|", gene2, "in", cell2)) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../Survival_Plots/", gene1, " in ", cell1, "_", gene2, " in ", cell2, "_Cox_Regression.png"), g$plot, width=10, height=6)
+  
+  new_data <- data.frame(
+      Celltype1 = cell1,  # some numeric data
+      Gene1 = gene1,  # some character data
+      Celltype2 = cell2, 
+      Gene2 = gene2,
+      KM_pvalue = p_val,  # some factor data
+      hr = hr[1],
+      hr_pvalue = hr_pvalue
+  )
+  results <- rbind(results, new_data)
+  
+}
+
+results <- results[order(results$KM_pvalue, decreasing = FALSE), ]
+write.table(results, file = "../Survival_Plots/a_results.txt", sep = "\t",
+            row.names = FALSE, col.names = TRUE)
+write.csv(results, file = "../Survival_Plots/a_results.csv",
+          row.names = FALSE)
+```

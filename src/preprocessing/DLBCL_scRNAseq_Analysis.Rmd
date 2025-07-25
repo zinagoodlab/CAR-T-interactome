@@ -1,0 +1,1079 @@
+---
+title: "script_markdown"
+author: "Kelvin Mo"
+date: "2023-05-23"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+# Install the magrittr package if not already installed
+if (!require(magrittr)) {
+    install.packages("magrittr")
+}
+
+# Load the magrittr package
+library(magrittr)
+```
+
+```{r}
+# Check if Bioconductor's BiocManager is installed
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+# Install glmGamPoi
+BiocManager::install("glmGamPoi")
+
+remove.packages("Seurat")
+remove.packages("dplyr")
+file.edit(file.path("~", ".Rprofile")) 
+install.packages("rlang")
+install.packages("xfun")
+```
+
+
+## Data Import
+```{r cars}
+################################ Data Import ###################################
+library(Seurat)
+library(patchwork)
+
+# Dataset 1
+data1 <- Read10X("C:/Users/Kelvi/OneDrive/Desktop/DLBCL_scRNAseq/DLBCL002B/filtered_feature_bc_matrix")  # Read the expression matrix
+seurat_obj1 <- CreateSeuratObject(counts = data1, project = "DLBCL002B")
+
+# Dataset 2
+data2 <- Read10X("C:/Users/Kelvi/OneDrive/Desktop/DLBCL_scRNAseq/DLBCL002NB/filtered_feature_bc_matrix")  # Read the expression matrix
+seurat_obj2 <- CreateSeuratObject(counts = data2, project = "DLBCL002NB")
+
+# Dataset 3
+data3 <- Read10X("C:/Users/Kelvi/OneDrive/Desktop/DLBCL_scRNAseq/DLBCL007B/filtered_feature_bc_matrix")  # Read the expression matrix
+seurat_obj3 <- CreateSeuratObject(counts = data3, project = "DLBCL007B")
+
+# Dataset 4
+data4 <- Read10X("C:/Users/Kelvi/OneDrive/Desktop/DLBCL_scRNAseq/DLBCL007NB/filtered_feature_bc_matrix")  # Read the expression matrix
+seurat_obj4 <- CreateSeuratObject(counts = data4, project = "DLBCL007NB")
+
+# Dataset 5
+data5 <- Read10X("C:/Users/Kelvi/OneDrive/Desktop/DLBCL_scRNAseq/DLBCL008B/filtered_feature_bc_matrix")  # Read the expression matrix
+seurat_obj5 <- CreateSeuratObject(counts = data5, project = "DLBCL008B")
+
+# Dataset 6
+data6 <- Read10X("C:/Users/Kelvi/OneDrive/Desktop/DLBCL_scRNAseq/DLBCL008NB/filtered_feature_bc_matrix")  # Read the expression matrix
+seurat_obj6 <- CreateSeuratObject(counts = data6, project = "DLBCL008NB")
+
+# Dataset 7
+data7 <- Read10X("C:/Users/Kelvi/OneDrive/Desktop/DLBCL_scRNAseq/DLBCL111B/filtered_feature_bc_matrix")  # Read the expression matrix
+seurat_obj7 <- CreateSeuratObject(counts = data7, project = "DLBCL111B")
+
+# Dataset 8
+data8 <- Read10X("C:/Users/Kelvi/OneDrive/Desktop/DLBCL_scRNAseq/DLBCL111NB/filtered_feature_bc_matrix")  # Read the expression matrix
+seurat_obj8 <- CreateSeuratObject(counts = data8, project = "DLBCL111NB")
+
+# Merge and combine 8 Seurat Objects into a single object
+DLBCL.big <- merge(seurat_obj1, y = c(seurat_obj2, seurat_obj3, seurat_obj4, seurat_obj5, seurat_obj6, seurat_obj7, seurat_obj8), add.cell.ids = c("DLBCL002B", "DLBCL002NB", "DLBCL007B", "DLBCL007NB", "DLBCL008B", "DLBCL008NB", "DLBCL111B", "DLBCL111NB"), project = "DLBCL")
+print(DLBCL.big)
+cat("\n")
+print(head(colnames(DLBCL.big)))
+cat("\n")
+# Double check the 8 Seurat objects with the correct labels
+unique(sapply(X = strsplit(colnames(DLBCL.big), split = "_"), FUN = "[", 1))
+table(DLBCL.big$orig.ident)
+```
+
+```{r}
+print(DLBCL.big)
+```
+
+
+##Exploratory Data Analysis
+```{r}
+################### Exploratory Data Analysis ##################################
+# Add in new column of metrics: percent of mitochondrial genes 
+DLBCL.big[["percent.mt"]] <- PercentageFeatureSet(DLBCL.big, pattern = "^MT-")
+head(DLBCL.big@meta.data, 5)
+
+# Visualize 3 QC metrics as a violin plot
+VlnPlot(DLBCL.big, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), ncol = 3, col=colorRampPalette(c( "#D9C393", "#8C1515"))(100))
+```
+
+
+```{r}
+# Plots to visualize feature-feature relationships
+plot1 <- FeatureScatter(DLBCL.big, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(DLBCL.big, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+```
+```{r}
+# Create a histogram of mitochondrial percentages
+hist(DLBCL.big$percent.mt, breaks = 50, col = "#D9C393", main = "Percentage of Mitochondrial Reads", xlab = "% of Mitochondrial Reads")
+# Add a vertical line to show the 10% threshold
+abline(v = 10, col = "#8C1515", lwd = 2)
+```
+
+
+## Filtering
+```{r}
+################################ Filtering #####################################
+# Filter for 10% or less mitochondrial DNA content
+DLBCL.big <- subset(DLBCL.big, subset = percent.mt < 10)
+```
+
+## Visualizations
+```{r}
+RidgePlot(DLBCL.big, features = c("CD7", "CD2"), ncol = 2)
+```
+
+
+## SC Transformation
+```{r}
+library(ggplot2)
+library(sctransform)
+
+# run sctransform: replaces normalization, data scaling and FindVariableFeatures()
+DLBCL.big <- SCTransform(DLBCL.big, vars.to.regress = "percent.mt", verbose = FALSE)
+```
+
+
+
+```{r}
+# Create a sequence of numbers (representing failures before r-th success)
+x <- 0:100
+
+# Define parameters for the two distributions
+r1 <- 5
+p1 <- 0.3
+
+r2 <- 7
+p2 <- 0.5
+
+# Calculate negative binomial probabilities for each x
+y1 <- dnbinom(x, size=r1, prob=p1)
+y2 <- dnbinom(x, size=r2, prob=p2)
+
+# Create a data frame for ggplot
+df <- data.frame(x, y1, y2)
+
+#colors <- c(paste("r=", r1, ", p=", p1) = "#8c1515", paste("r=", r2, ", p=", p2) = "#D9C393")
+colors <- setNames(c("#8c1515", "#D9C393"), c(paste("r=", r1, ", p=", p1), paste("r=", r2, ", p=", p2)))
+
+# Plot
+ggplot(df, aes(x)) + 
+  geom_line(aes(y = y1, color = paste("r=", r1, ", p=", p1)), size=1) +
+  geom_line(aes(y = y2, color = paste("r=", r2, ", p=", p2)), size=1) +
+  labs(title = "Negative Binomial Distributions",
+       x = "Number of Failures before r-th success",
+       y = "Probability",
+       color = "Parameters") +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.line = element_line(colour = "black")
+  ) + scale_color_manual(values=colors)
+```
+
+
+## PCA
+```{r}
+# These are now standard steps in the Seurat workflow for visualization and clustering
+DLBCL.big <- RunPCA(DLBCL.big, npcs= 30, features = VariableFeatures(object = DLBCL.big),  verbose = FALSE)
+DLBCL.big <- RunPCA(DLBCL.big, features = VariableFeatures(object = DLBCL.big))
+# Elbow plot to determine the number of PCs
+ElbowPlot(DLBCL.big)
+```
+
+
+```{r}
+test <- RunUMAP(DLBCL.big, dims = 1:10, verbose = FALSE)
+test <- FindNeighbors(test, dims = 1:10)
+test <- FindClusters(test, resolution = 1)
+DimPlot(test, group.by = "seurat_clusters", label = TRUE)
+```
+
+
+## TODO: Perform Integration using the harmony package
+```{r}
+# Perform integration test using the harmony package
+install.packages('devtools')
+devtools::install_github("immunogenomics/harmony")
+library(harmony)
+
+```
+
+
+## Clustering
+```{r}
+DLBCL.big <- FindNeighbors(DLBCL.big, dims = 1:10, verbose = FALSE)
+DLBCL.big <- RunUMAP(DLBCL.big, dims = 1:10, verbose = FALSE)
+DLBCL.big <- FindClusters(DLBCL.big, resolution = 1, verbose = FALSE)
+DLBCL.big <- RunHarmony(DLBCL.big, group.by.vars = "seurat_clusters", reduction = "pca")
+DimPlot(DLBCL.big, group.by = "seurat_clusters", label = TRUE)
+```
+
+## Cell Type Classification
+```{r}
+library(Seurat)
+# Explore cluster-specific gene expression
+DLBCL.big.markers <- FindAllMarkers(DLBCL.big, only.pos=TRUE, min.pct=0.25, logfc.threshold=0.25)
+DLBCL.big.markers
+```
+```{r}
+# DLBCL.big.markers[DLBCL.big.markers$cluster == 1, ]
+# DLBCL.big$celltype <- "Unknown"
+# DLBCL.big$celltype[DLBCL.big$seurat_clusters == 0] <- "CellType1"
+```
+
+```{r}
+# Find markers for every cluster compared to all remaining cells
+library(magrittr)
+library(patchwork)
+library(dplyr)
+DLBCL.big.markers%>%
+  group_by(cluster) %>%
+  slice_max(n = 3, order_by = avg_log2FC)
+```
+
+```{r}
+FeaturePlot(DLBCL.big, features = c("LTB", "TNFRSF4", "NKG7", "IGLV4-69", "TXNIP", "IGKV4-1", "CCL5", "CST3",
+    "TUBA1B", "IGKV1D-39"))
+```
+
+```{r}
+saveRDS(DLBCL.big, file="../DLBCL_big_final.rds")
+head(DLBCL.big@meta.data, 5)
+```
+## Azimuth
+```{r}
+devtools::install_github('satijalab/seurat')
+devtools::install_github('satijalab/azimuth')
+library(Azimuth)
+```
+
+## Azimuth Cell Type Predictions (Bone Marrow)
+```{r}
+df_BoneMarrow <- readRDS("../DLBCL_big_final.rds")
+```
+
+
+```{r}
+predictions <- read.delim('../Azimuth_BM/azimuth_pred.tsv', row.names = 1)
+DLBCL.big <- AddMetaData(
+  object = DLBCL.big,
+	metadata = predictions)
+head(DLBCL.big)
+```
+
+## Azimuth UMAP Predictions
+```{r}
+projected.umap <- readRDS('../Azimuth_BM/azimuth_umap.Rds')
+DLBCL.big <- DLBCL.big[, Cells(projected.umap)]
+DLBCL.big[['umap.proj']] <- projected.umap
+DimPlot(DLBCL.big, group.by = "predicted_celltype_BoneMarrow", reduction = "umap", label = FALSE, label.size=2) + ggtitle("Bone Marrow")
+```
+
+
+```{r}
+DimPlot(DLBCL.big, group.by = "predicted.celltype.l2", reduction = "umap", label = TRUE, label.size=2) + NoLegend() + ggtitle("Bone Marrow")
+```
+
+## TODO: Plot by sample (group.by/split.by)
+```{r fig.width = 15, fig.height = 12}
+DimPlot(DLBCL.big, group.by = "predicted.celltype.l2", reduction = "umap", split.by = "orig.ident", label = FALSE, label.size=2, ncol=2) + ggtitle("Bone Marrow")
+```
+
+```{r fig.width = 12, fig.height = 10}
+# Count cell types per sample
+celltype_counts <- DLBCL.big@meta.data %>% 
+  group_by(orig.ident, predicted_celltype_BoneMarrow) %>% 
+  summarise(n = n(), .groups = "drop") 
+
+# Calculate proportions
+celltype_props <- celltype_counts %>%
+  group_by(orig.ident) %>%
+  mutate(prop = n / sum(n))
+
+# Plot
+ggplot(celltype_props, aes(x = orig.ident, y = prop, fill = predicted_celltype_BoneMarrow)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(x = "Sample ID", y = "Proportion", fill = "Predicted Cell Type") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+## Azimuth Final Results
+```{r}
+DLBCL.big <- AddAzimuthResults(DLBCL.big, filename = '../Azimuth_BM/azimuth_results.Rds')
+head(DLBCL.big, 5)
+```
+
+```{r}
+plots <- VlnPlot(DLBCL.big, features = c("LTB", "NKG7"), group.by = "predicted.celltype.l2", pt.size=0, 
+    combine = FALSE) 
+wrap_plots(plots = plots, ncol = 1) + theme(axis.text.x = element_text(size = 6)) + NoLegend()
+
+```
+
+```{r}
+# Dot plots - the size of the dot corresponds to the percentage of cells expressing the
+# feature in each cluster. The color represents the average expression level
+DotPlot(DLBCL.big, features = c("LYZ", "CCL5", "IL32", "NKG7", "APOD"), group.by = "predicted.celltype.l2") + RotatedAxis() + theme(axis.text.y = element_text(size = 8))
+```
+
+```{r}
+FeaturePlot(DLBCL.big, features = "IL32")
+```
+
+
+```{r}
+# Unique values of cell types
+unique(DLBCL.big[['predicted.celltype.l2']])
+```
+
+# TODO: Azimuth Bone Marrow + Azimuth PBMC + SingleR (celldex)
+
+```{r}
+# Change column names of the seurat object
+colnames(DLBCL.big@meta.data)[colnames(DLBCL.big@meta.data) == "predicted.celltype.l2"] <- "predicted_celltype_BoneMarrow"
+colnames(DLBCL.big@meta.data)[colnames(DLBCL.big@meta.data) == "predicted.celltype.l2.score"] <- "predicted_celltype_BoneMarrow_score"
+colnames(DLBCL.big@meta.data)[colnames(DLBCL.big@meta.data) == "mapping.score"] <- "mapping_score_BoneMarrow"
+head(DLBCL.big)
+```
+
+## Azimuth Cell Type Predictions (PBMC)
+
+```{r}
+df_PBMC <- readRDS("../DLBCL_big_final.rds")
+head(df_PBMC)
+```
+
+```{r}
+predictions <- read.delim('../Azimuth_PBMC/azimuth_pred.tsv', row.names = 1)
+df_PBMC <- AddMetaData(
+	object = df_PBMC,
+	metadata = predictions)
+head(df_PBMC)
+colnames(df_PBMC@meta.data)[colnames(df_PBMC@meta.data) == "predicted.celltype.l2"] <- "predicted_celltype_PBMC"
+```
+
+```{r}
+projected.umap <- readRDS('../Azimuth_PBMC/azimuth_umap.Rds')
+df_PBMC <- df_PBMC[, Cells(projected.umap)]
+df_PBMC[['umap.proj']] <- projected.umap
+head(df_PBMC)
+DimPlot(df_PBMC, group.by = "predicted.celltype.l2", reduction = "umap", label = FALSE, label.size=2) + ggtitle("PBMC")
+```
+
+```{r}
+DimPlot(df_PBMC, group.by = "predicted.celltype.l2", reduction = "umap", label = TRUE, label.size=2) + NoLegend() + ggtitle("PBMC")
+```
+
+```{r fig.width = 15, fig.height = 12}
+DimPlot(df_PBMC, group.by = "predicted.celltype.l2", reduction = "umap", split.by = "orig.ident", label = FALSE, label.size=2, ncol=2) + ggtitle("PBMC")
+```
+
+```{r fig.width = 12, fig.height = 10}
+# Count cell types per sample
+celltype_counts <- df_PBMC@meta.data %>% 
+  group_by(orig.ident, predicted_celltype_PBMC) %>% 
+  summarise(n = n(), .groups = "drop") 
+
+# Calculate proportions
+celltype_props <- celltype_counts %>%
+  group_by(orig.ident) %>%
+  mutate(prop = n / sum(n))
+
+# Plot
+ggplot(celltype_props, aes(x = orig.ident, y = prop, fill = predicted_celltype_PBMC)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(x = "Sample ID", y = "Proportion", fill = "Predicted Cell Type") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+
+## CELLDEX
+## Cell Type Predictions (HPCA Reference) 
+```{r}
+BiocManager::install("celldex")
+library(celldex)
+library(SingleR)
+hpca.se <- HumanPrimaryCellAtlasData()
+df_HPCA <- readRDS("../DLBCL_big_final.rds")
+sce <- as.SingleCellExperiment(df_HPCA)
+results <- SingleR(test = sce, ref = hpca.se, assay.type.test=1, labels = hpca.se$label.main)
+table(results$labels)
+```
+
+```{r}
+df_HPCA$predicted_celltype_HPCA <- results$labels
+head(df_HPCA)
+```
+
+```{r}
+DimPlot(df_HPCA, group.by = "predicted_celltype_HPCA", reduction = "umap", label = FALSE, label.size=2) + ggtitle("HPCA")
+```
+
+```{r}
+DimPlot(df_HPCA, group.by = "predicted_celltype_HPCA", reduction = "umap", label = TRUE, label.size=2) + NoLegend() + ggtitle("HPCA")
+```
+
+```{r fig.width = 15, fig.height = 12}
+DimPlot(df_HPCA, group.by = "predicted_celltype_HPCA", reduction = "umap", split.by = "orig.ident", label = FALSE, label.size=2, ncol=2) + ggtitle("HPCA")
+```
+
+```{r fig.width = 12, fig.height = 10}
+# Count cell types per sample
+celltype_counts <- df_HPCA@meta.data %>% 
+  group_by(orig.ident, predicted_celltype_HPCA) %>% 
+  summarise(n = n(), .groups = "drop") 
+
+# Calculate proportions
+celltype_props <- celltype_counts %>%
+  group_by(orig.ident) %>%
+  mutate(prop = n / sum(n))
+
+# Plot
+ggplot(celltype_props, aes(x = orig.ident, y = prop, fill = predicted_celltype_HPCA)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(x = "Sample ID", y = "Proportion", fill = "Predicted Cell Type") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+## CELLDEX
+## Cell Type Predictions (Blueprint/ENCODE Reference) 
+```{r}
+# Blueprint/ENCODE reference consists of bulk RNA-seq data for pure stroma and immune cells 
+ref <- BlueprintEncodeData()
+df_ENCODE <- readRDS("../DLBCL_big_final.rds")
+sce <- as.SingleCellExperiment(df_ENCODE)
+results <- SingleR(test = sce, ref = ref, assay.type.test=1, labels = ref$label.main)
+table(results$labels)
+```
+
+```{r}
+df_ENCODE$predicted_celltype_ENCODE <- results$labels
+```
+
+```{r}
+DimPlot(df_ENCODE, group.by = "predicted_celltype_ENCODE", reduction = "umap", label = FALSE, label.size=2) + ggtitle("Blueprint/ENCODE")
+```
+
+```{r}
+DimPlot(df_ENCODE, group.by = "predicted_celltype_ENCODE", reduction = "umap", label = TRUE, label.size=2) + NoLegend() + ggtitle("Blueprint/ENCODE")
+```
+
+```{r fig.width = 15, fig.height = 12}
+DimPlot(df_ENCODE, group.by = "predicted_celltype_ENCODE", reduction = "umap", split.by = "orig.ident", label = FALSE, label.size=2, ncol=2) + ggtitle("ENCODE")
+```
+
+```{r fig.width = 12, fig.height = 10}
+# Count cell types per sample
+celltype_counts <- df_ENCODE@meta.data %>% 
+  group_by(orig.ident, predicted_celltype_ENCODE) %>% 
+  summarise(n = n(), .groups = "drop") 
+
+# Calculate proportions
+celltype_props <- celltype_counts %>%
+  group_by(orig.ident) %>%
+  mutate(prop = n / sum(n))
+
+# Plot
+ggplot(celltype_props, aes(x = orig.ident, y = prop, fill = predicted_celltype_ENCODE)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(x = "Sample ID", y = "Proportion", fill = "Predicted Cell Type") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+## CELLDEX
+## Cell Type Predictions (DICE Reference) = Database of Immune Cell Expression/eQTLs/Epigenomics
+```{r}
+# Consists of bulk RNA-seq samples of sorted cell populations
+DICE <- DatabaseImmuneCellExpressionData()
+df_DICE <- readRDS("../DLBCL_big_final.rds")
+sce <- as.SingleCellExperiment(df_DICE)
+results <- SingleR(test = sce, ref = DICE, assay.type.test=1, labels = DICE$label.main)
+df_DICE$predicted_celltype_DICE <- results$labels
+table(results$labels)
+```
+
+```{r}
+DimPlot(df_DICE, group.by = "predicted_celltype_DICE", reduction = "umap", label = FALSE, label.size=2) + ggtitle("DICE")
+```
+
+```{r}
+DimPlot(df_DICE, group.by = "predicted_celltype_DICE", reduction = "umap", label = TRUE, label.size=2) + NoLegend() + ggtitle("DICE")
+```
+
+```{r fig.width = 15, fig.height = 12}
+DimPlot(df_DICE, group.by = "predicted_celltype_DICE", reduction = "umap", split.by = "orig.ident", label = FALSE, label.size=2, ncol=2) + ggtitle("DICE")
+```
+
+```{r fig.width = 12, fig.height = 10}
+# Count cell types per sample
+celltype_counts <- df_DICE@meta.data %>% 
+  group_by(orig.ident, predicted_celltype_DICE) %>% 
+  summarise(n = n(), .groups = "drop") 
+
+# Calculate proportions
+celltype_props <- celltype_counts %>%
+  group_by(orig.ident) %>%
+  mutate(prop = n / sum(n))
+
+# Plot
+ggplot(celltype_props, aes(x = orig.ident, y = prop, fill = predicted_celltype_DICE)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(x = "Sample ID", y = "Proportion", fill = "Predicted Cell Type") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+## CELLDEX
+## Cell Type Predictions (Novershtern Hematopoietic Reference) = microarray datasets for sorted hematopoietic cell populations
+```{r}
+# Microarray datasets for sorted hematopoietic cell populations
+NHD <- NovershternHematopoieticData()
+df_NHD <- readRDS("../DLBCL_big_final.rds")
+sce <- as.SingleCellExperiment(df_NHD)
+results <- SingleR(test = sce, ref = NHD, assay.type.test=1, labels = NHD$label.main)
+df_NHD$predicted_celltype_NHD <- results$labels
+table(results$labels)
+```
+
+```{r}
+DimPlot(df_NHD, group.by = "predicted_celltype_NHD", reduction = "umap", label = FALSE, label.size=2) + ggtitle("Novershtern Hematopoietic Data")
+```
+
+```{r}
+DimPlot(df_NHD, group.by = "predicted_celltype_NHD", reduction = "umap", label = TRUE, label.size=2) + NoLegend() + ggtitle("Novershtern Hematopoietic Data")
+```
+
+```{r fig.width = 15, fig.height = 12}
+DimPlot(df_NHD, group.by = "predicted_celltype_NHD", reduction = "umap", split.by = "orig.ident", label = FALSE, label.size=2, ncol=2) + ggtitle("Novershtern Hematopoietic Data")
+```
+
+```{r fig.width = 12, fig.height = 10}
+# Count cell types per sample
+celltype_counts <- df_NHD@meta.data %>% 
+  group_by(orig.ident, predicted_celltype_NHD) %>% 
+  summarise(n = n(), .groups = "drop") 
+
+# Calculate proportions
+celltype_props <- celltype_counts %>%
+  group_by(orig.ident) %>%
+  mutate(prop = n / sum(n))
+
+# Plot
+ggplot(celltype_props, aes(x = orig.ident, y = prop, fill = predicted_celltype_NHD)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(x = "Sample ID", y = "Proportion", fill = "Predicted Cell Type") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+## CELLDEX
+## Cell Type Predictions (Monaco Immune Data Reference) = bulk RNA-seq samples of sorted immune cell populations
+```{r}
+# Bulk RNA-seq samples of sorted immune cell populations
+NI <- MonacoImmuneData()
+df_NI <- readRDS("../DLBCL_big_final.rds")
+sce <- as.SingleCellExperiment(df_NI)
+results <- SingleR(test = sce, ref = NI, assay.type.test=1, labels = NI$label.main)
+df_NI$predicted_celltype_NI <- results$labels
+table(results$labels)
+```
+
+```{r}
+DimPlot(df_NI, group.by = "predicted_celltype_NI", reduction = "umap", label = FALSE, label.size=2) + ggtitle("Monaco Immune Data")
+```
+
+```{r}
+DimPlot(df_NI, group.by = "predicted_celltype_NI", reduction = "umap", label = TRUE, label.size=2) + NoLegend() + ggtitle("Monaco Immune Data")
+```
+
+```{r fig.width = 15, fig.height = 12}
+DimPlot(df_NI, group.by = "predicted_celltype_NI", reduction = "umap", split.by = "orig.ident", label = FALSE, label.size=2, ncol=2) + ggtitle("Monaco Immune Data")
+```
+
+```{r fig.width = 12, fig.height = 10}
+# Count cell types per sample
+celltype_counts <- df_NI@meta.data %>% 
+  group_by(orig.ident, predicted_celltype_NI) %>% 
+  summarise(n = n(), .groups = "drop") 
+
+# Calculate proportions
+celltype_props <- celltype_counts %>%
+  group_by(orig.ident) %>%
+  mutate(prop = n / sum(n))
+
+# Plot
+ggplot(celltype_props, aes(x = orig.ident, y = prop, fill = predicted_celltype_NI)) +
+  geom_bar(stat = "identity", position = "fill") +
+  labs(x = "Sample ID", y = "Proportion", fill = "Predicted Cell Type") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+```
+
+
+################################ Inputs #################################
+```{r}
+# 2. Define cell type markers.
+t_genes <- c("PDCD1", "LAG3", "CD101", "CD244", "BTLA", "HAVCR2", "ENTPD1", "NT5E", "ITGAE", "TNFRSF18", "VSIR",  # Exhaustion markers / inhibitory receptors
+						 # PDCD1 = PD1, CD244 = 2B4, BTLA = CD272, HAVCR2 = TIM3, ENTPD1 = CD39, NT5E = CD73, ITGAE = CD103, TNFRSF18 = CD357 (GITR)
+						 "TOX", "TOX2", "NR4A1", "NR4A2", "NR4A3", "ID3", "SOX4", "NFATC2",  # Exhaustion TFs
+						 "TBX21", "GATA3", "BCL6", "RORC", "MAF", "AHR",
+						 # Th subsets: Th1 (T-bet), Th2 (GATA3), Tfh (BCL6), Th17 (RORgt); MAF in Tfh and maybe others
+						 "SELL", "CCR7", "IL7R", "LTB", "IL2RB", "CXCR3",  # Naive/memory markers
+						 # SELL = CD62L, IL7R = IL7Ra, CXCR3 = CD183
+						 "LEF1", "TCF7", "KLF2", "P2RX7", "FOXO1",  # Naive/memory TFs
+						 "CD58", "CD2", "CD7", "CD27", "CD28", "TNFRSF4", "TNFRSF9", "TNFRSF14", "ICOS", "CD226", "TNFRSF8", "HAVCR1", "PVR", "CD40LG",  # Activating receptors
+						 # TNFRSF4 = CD134, TNFRSF9 = CD137, ICOS = CD278, TNFRSF14 = CD270 (HVEM; binds BTLA or CD160 - inhibitory and LIGHT - activating)
+						 # CD226 = DNAM1, PVR = CD155 (binds TIGIT - inhibitory and DNAM/CD226 - activating)
+						 # TNFRSF8 = CD30, HAVCR1 = CD365 (TIM1), VSIR = B7-H5 (VISTA), CD40LG = CD40L (CD154)
+						 "FAS", "GNLY", "GZMA", "GZMB", "GZMH", "GZMK", "LAMP1", "PRF1", "SRGN", "NKG7", "CST7", "CTSW", "CX3CR1",
+						 # Effector markers; GZMK in Tem; CX3CR1 marks good Teff in mice
+						 # FAS = CD95
+						 "EOMES", "TBX21", "PRDM1", "ZEB2", "HOPX", "FLI1", "BAFT", "IRF4", "ID2",  # Effector TFs
+						 # TBX21 = T-bet, PRDM1 = BLIMP1
+						 "IL2RA", "CD38", "CD44", "CD69",  # Activation markers
+						 "CTLA4", "TIGIT", "FOXP3", "IKZF2", "NRP1", "RTKN2", "ARG1", "TGFB1", "TGFB2", "TGFB3", "ADORA2A", "ADORA2B", "CCR4", "CCR8",
+						 # Treg markers; ARG1 is generally suppressive
+						 # NRP1 = CD304 (very suppressive Treg, nTreg), IKZF2 = Helios (nTreg)
+						 "IFNG", "IL2", "IL4", "IL5", "IL10", "IL13", "IL17A", "IL17F", "IL21", "TNF",  "CSF2", "CCL5", "CXCL10", "METRNL",  # Cytokines (Th1: IFNg and CSF2 = GM-SCF; Th2: IL4, IL5, IL13; Th17: IL17A, IL17F; Tfh: IL21)
+						 "B3GAT1", "KLRG1", "USP16", "GLB1", "CDKN1A", "CDKN2A",  # Senescence - CD57, KLRG1 (and low CD27, CD28); USP16 (Dorian), beta-galactosidase; P21 (CDKN1A) and P16 (CDKN2A)             "MKI67", "MYC", "MYCL", "MYCN",  # Proliferation - Ki-67, Myc
+						 "NCAM1", "FCGR3A", "KLRB1", "KLRC1", "KLRC2", "KLRC3", "KLRD1", "KIR2DL1", "KIR2DL4", "KIR3DL1",  # NK markers
+						 "BATF", "BATF3", "IRF1", "IRF2", "IRF3", "IRF4", "IRF8", "JUND", "JUNB", "JUN", "FOS", "FOSB", "FOSL1", "FOSL2", "BACH1", "BACH2", "ATF1",  "ATF2", "ATF3", "ATF4", "ATF5", "ATF6", "ATF7",  # AP1 TFs
+						 "TERT", "TERC", "DKC1",  # Telomerase genes
+						 "MKI67", "MYC", "MYCL", "MYCN",  "ACC1",  # Proliferation - Ki-67, Myc, LINC from Elena
+						 "SLC2A1", "SLC2A2", "SLC2A3", "SLC2A4", "SLC2A5", "SLC2A14", "SLC1A5", "SLC38A1", "SLC38A2", "GLS", "HK2", "CD36", "ASS1", "SLC7A1", "SLC7A2", "CPT1A",
+						 # Metabolism: GLUT1, GLUT3, GLUT14 (GLUT3 paralog); also GLUT2/4/5 for completeness
+						 "TRAC", "TRBC1", "TRBC2", "TRGC1", "TRGC2", "TRDC",  # TCR gd vs. ab
+						 "CD3E", "CD3D", "CD3G", "CD247", "CD5", "CD4", "CD8A", "CD8B", "PTPRC", "CD52")  # T-cell markers
+# T-cell markers, CD4 vs. CD8 subsets; PTPRC = CD45, CD247 = CD3z
+b_genes <- c("MME", "CD19", "MS4A1", "CR2", "CD22", "CD24", "CD40", "CD79A", "CD79B", "PAX5")
+# MME = CD10, CR2 = CD21, MS4A1 = CD20
+plasma_genes <- c("IGKC", "IGLC1", "IGLC2", "IGLC3", "IGHM", "IGHD", "IGHG1", "IGHG2", "IGHG3", "IGHG4",
+									"IGHA1", "IGHA2", "JCHAIN", "SDC1", "CD38", "PRDM1", "TNFRSF13B", "TNFRSF17", "TNFRSF13C",
+									"HLA-DRA", "HLA-DRB1", "HLA-DRB3", "HLA-DRB4", "HLA-DRB5")
+#  TNFRSF13B = CD267 (TACI), TNFRSF17 = BCMA (CD269), TNFRSF13C = BAFFR (CD268), SDC1 = CD138
+hpsc_genes <- c("HLF", "PROCR", "THY1", "CD34")  # 	PROCR encodes CD201/EPCR, THY1 encodes CD90
+mye_genes <- c("CSF1R", "CD33", "ADGRE1", "CD14", "CD68", "LYZ", "CD274", "CD163", "CD80", "CD86", "ITGAM", "CX3CR1", "WNT5A", "LYVE1")
+# ADGRE1 = F4/80 (EMR1) on macrophages; CX3CR1 binds CX3CL1 (fractalkine), ITGAM = CD11b, WNT5A secreted by MDSCs, CD163 is a TAM marker
+nk_genes <- c("NCAM1", "NKG7", "MME", "GZMB", "FCGR3A", "KLRC1", "KLRC2", "KLRC3", "KLRD1", "KLRG1", "KIR2DL1", "KIR3DL1")
+# NCAM1 = CD56, FCGR3A = CD16, B3GAT1 = enzyme making CD57, KLRC1 = CD159 (NKG2)
+fib_genes <- c("PDGFRA", "PDGFRB", "PDPN", "FAP", "GFPT2", "ACTA2", "GPC6", "MME", "S100A4", "VIM")
+# ACTA2 = aSMA, S100A4 = FSP1,
+end_genes <- c("ENG", "VWF", "NOS3", "PECAM1", "ACKR1", "CD93")
+#  PECAM1 = CD31, ACKR1 = DARC
+ang_genes <- c("VEGFA", "VEGFB", "VEGFC", "VEGFD", "PGF", "FLT1", "KDR", "FLT4")
+#  FLT1 = VEGFR1, KDR = VEGFR2, FLT4 = VEGFR3
+epi_genes <- c("EPCAM",  "CD276", "KRT6C", "KRT16", "KRT23", "KRT85")
+plat_genes <- c("PPBP", "ITGB3", "ITGA2B", "SPN", "GP1BA") # ITGB3 = CD61, ITGA2B = CD41, SPN = CD43
+rbc_genes <- c("GYPA")  # CD235a
+mast_genes <- c("CPA3", "KIT", "HDC", "MS4A2", "LTC4S")  # MS4A2 = FCER1B
+pDC_genes <- c("IL3RA", "CD4", "CD74", "CLEC4C", "TLR7", "TLR9", "NRP1", "IRF4", "IRF8", "ZEB2", "ID2", "KLF4", "IKZF1", "BATF3")
+neu_genes <- c("ITGAM", "FCGR3B", "FCGR2B", "CD33", "CD44", "CEACAM8", "ITGB2", "MPO", "KIT", "CD38", "S100A8", "S100A9", "LYZ", "AIF1", "IFI30", "CST3")
+# Neutrophil markers: ITGAM = CD11b, FCGR3B = CD16b, FCGR2B = CD32b, CEACAM8 = CD66b, ITGB2 = CD18, MPO = Myeloperoxidase, KIT = CD117
+malignant_genes <- c("CD274", "CD276", "PDCD1LG2")  # CD274 = PDL1, CD276 = B7H3, PDCD1LG2 = CD273 (PDL2)
+genes <- unique(c(t_genes, b_genes, plasma_genes, hpsc_genes, end_genes, mye_genes, nk_genes, fib_genes, ang_genes, epi_genes, plat_genes, rbc_genes, mast_genes, pDC_genes, neu_genes, malignant_genes))
+rm(b_genes); rm(plasma_genes); rm(end_genes); rm(mye_genes); rm(nk_genes); rm(fib_genes); rm(ang_genes); rm(epi_genes); rm(plat_genes); rm(mast_genes); rm(pDC_genes); rm(rbc_genes); rm(neu_genes); rm(malignant_genes); rm(hpsc_genes)
+genes <- c(genes, "CD200R1", "CD200")
+genes
+```
+
+# Gene Expression Analysis/Marker Feature Expression Visualization
+## Azimuth - Bone Marrow
+```{r fig.width = 15, fig.height = 12}
+DoHeatmap(DLBCL.big, features=genes, group.by="predicted_celltype_BoneMarrow", cells=1:500, size=2, angle=90)
+```
+
+```{r}
+all_features <- rownames(DLBCL.big@assays$RNA@counts)
+for(i in genes){
+  if(i %in% all_features){
+    FeaturePlot(DLBCL.big, features=i, min.cutoff=1) + ggtitle(i)
+    ggsave(filename = paste0("../Plots/Azimuth_BoneMarrow/UMAP/", i, ".png"))  
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    VlnPlot(DLBCL.big, features=i, group.by="predicted_celltype_BoneMarrow") + theme(axis.text.x = element_text(size = 6)) + NoLegend() + ggtitle(i)
+    ggsave(filename=paste0("../Plots/Azimuth_BoneMarrow/VlnPlot/", i, ".png"))
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    df <- data.frame(CellType = DLBCL.big@meta.data$predicted_celltype_BoneMarrow,
+                 Gene_Expression = DLBCL.big@assays$RNA@counts[i, ])
+
+    # Average expression per cell type
+    df_barplot <- df %>%
+      group_by(CellType) %>%
+      summarise(Gene_Expression = mean(Gene_Expression, na.rm = TRUE))
+
+    # BarPlot
+    ggplot(df_barplot, aes(x = CellType, y = Gene_Expression)) +
+      geom_bar(stat="identity", fill="black") +
+      xlab("Predicted Cell Type") +
+      ylab("Average Expression") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/Azimuth_BoneMarrow/Barplot/", i, ".png"))
+    
+    # BoxPlot
+    ggplot(df, aes(x = CellType, y = Gene_Expression)) +
+      geom_boxplot() +
+      xlab("Predicted Cell Type") +
+      ylab("Expression Level") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/Azimuth_BoneMarrow/Boxplot/", i, ".png"))
+  }
+}
+```
+
+## Azimuth - PBMC
+```{r fig.width = 15, fig.height = 12}
+DoHeatmap(df_PBMC, features=genes, group.by="predicted.celltype.l2", cells=1:500, size=2, angle=90)
+```
+
+```{r}
+all_features <- rownames(df_PBMC@assays$RNA@counts)
+for(i in genes){
+  if(i %in% all_features){
+    FeaturePlot(df_PBMC, features=i, min.cutoff=1) + ggtitle(i)
+    ggsave(filename = paste0("../Plots/Azimuth_PBMC/UMAP/", i, ".png"))  
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    VlnPlot(df_PBMC, features=i, group.by="predicted.celltype.l2") + theme(axis.text.x = element_text(size = 6)) + NoLegend() + ggtitle(i)
+    ggsave(filename=paste0("../Plots/Azimuth_PBMC/VlnPlot/", i, ".png"))
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    df <- data.frame(CellType = df_PBMC@meta.data$predicted.celltype.l2,
+                 Gene_Expression = df_PBMC@assays$RNA@counts[i, ])
+
+    # Average expression per cell type
+    df_barplot <- df %>%
+      group_by(CellType) %>%
+      summarise(Gene_Expression = mean(Gene_Expression, na.rm = TRUE))
+
+    # BarPlot
+    ggplot(df_barplot, aes(x = CellType, y = Gene_Expression)) +
+      geom_bar(stat="identity", fill="black") +
+      xlab("Predicted Cell Type") +
+      ylab("Average Expression") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/Azimuth_PBMC/Barplot/", i, ".png"))
+    
+    # BoxPlot
+    ggplot(df, aes(x = CellType, y = Gene_Expression)) +
+      geom_boxplot() +
+      xlab("Predicted Cell Type") +
+      ylab("Expression Level") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/Azimuth_PBMC/Boxplot/", i, ".png"))
+  }
+}
+```
+
+
+## SingleR - DICE
+```{r fig.width = 15, fig.height = 12}
+DoHeatmap(df_DICE, features=genes, group.by="predicted_celltype_DICE", cells=1:500, size=2, angle=90)
+```
+
+
+```{r}
+all_features <- rownames(df_DICE@assays$RNA@counts)
+for(i in genes){
+  if(i %in% all_features){
+    FeaturePlot(df_DICE, features=i, min.cutoff=1) + ggtitle(i)
+    ggsave(filename = paste0("../Plots/SingleR_DICE/UMAP/", i, ".png"))  
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    VlnPlot(df_DICE, features=i, group.by="predicted_celltype_DICE") + theme(axis.text.x = element_text(size = 6)) + NoLegend() + ggtitle(i)
+    ggsave(filename=paste0("../Plots/SingleR_DICE/VlnPlot/", i, ".png"))
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    df <- data.frame(CellType = df_DICE@meta.data$predicted_celltype_DICE,
+                 Gene_Expression = df_DICE@assays$RNA@counts[i, ])
+
+    # Average expression per cell type
+    df_barplot <- df %>%
+      group_by(CellType) %>%
+      summarise(Gene_Expression = mean(Gene_Expression, na.rm = TRUE))
+
+    # BarPlot
+    ggplot(df_barplot, aes(x = CellType, y = Gene_Expression)) +
+      geom_bar(stat="identity", fill="black") +
+      xlab("Predicted Cell Type") +
+      ylab("Average Expression") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/SingleR_DICE/Barplot/", i, ".png"))
+    
+    # BoxPlot
+    ggplot(df, aes(x = CellType, y = Gene_Expression)) +
+      geom_boxplot() +
+      xlab("Predicted Cell Type") +
+      ylab("Expression Level") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/SingleR_DICE/Boxplot/", i, ".png"))
+  }
+}
+```
+
+
+## SingleR - Blueprint/ENCODE
+```{r fig.width = 15, fig.height = 12}
+DoHeatmap(df_ENCODE, features=genes, group.by="predicted_celltype_ENCODE", cells=1:500, size=2, angle=90)
+```
+
+
+```{r}
+all_features <- rownames(df_ENCODE@assays$RNA@counts)
+for(i in genes){
+  if(i %in% all_features){
+    FeaturePlot(df_ENCODE, features=i, min.cutoff=1) + ggtitle(i)
+    ggsave(filename = paste0("../Plots/SingleR_ENCODE/UMAP/", i, ".png"))  
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    VlnPlot(df_ENCODE, features=i, group.by="predicted_celltype_ENCODE") + theme(axis.text.x = element_text(size = 6)) + NoLegend() + ggtitle(i)
+    ggsave(filename=paste0("../Plots/SingleR_ENCODE/VlnPlot/", i, ".png"))
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    df <- data.frame(CellType = df_ENCODE@meta.data$predicted_celltype_ENCODE,
+                 Gene_Expression = df_ENCODE@assays$RNA@counts[i, ])
+
+    # Average expression per cell type
+    df_barplot <- df %>%
+      group_by(CellType) %>%
+      summarise(Gene_Expression = mean(Gene_Expression, na.rm = TRUE))
+
+    # BarPlot
+    ggplot(df_barplot, aes(x = CellType, y = Gene_Expression)) +
+      geom_bar(stat="identity", fill="black") +
+      xlab("Predicted Cell Type") +
+      ylab("Average Expression") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/SingleR_ENCODE/Barplot/", i, ".png"))
+    
+    # BoxPlot
+    ggplot(df, aes(x = CellType, y = Gene_Expression)) +
+      geom_boxplot() +
+      xlab("Predicted Cell Type") +
+      ylab("Expression Level") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/SingleR_ENCODE/Boxplot/", i, ".png"))
+  }
+}
+```
+
+
+## SingleR - HPCA
+```{r fig.width = 15, fig.height = 12}
+DoHeatmap(df_HPCA, features=genes, group.by="predicted_celltype_HPCA", cells=1:500, size=2, angle=90)
+```
+
+
+```{r}
+all_features <- rownames(df_HPCA@assays$RNA@counts)
+for(i in genes){
+  if(i %in% all_features){
+    FeaturePlot(df_HPCA, features=i, min.cutoff=1) + ggtitle(i)
+    ggsave(filename = paste0("../Plots/SingleR_HPCA/UMAP/", i, ".png"))  
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    VlnPlot(df_HPCA, features=i, group.by="predicted_celltype_HPCA") + theme(axis.text.x = element_text(size = 6)) + NoLegend() + ggtitle(i)
+    ggsave(filename=paste0("../Plots/SingleR_HPCA/VlnPlot/", i, ".png"))
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    df <- data.frame(CellType = df_HPCA@meta.data$predicted_celltype_HPCA,
+                 Gene_Expression = df_HPCA@assays$RNA@counts[i, ])
+
+    # Average expression per cell type
+    df_barplot <- df %>%
+      group_by(CellType) %>%
+      summarise(Gene_Expression = mean(Gene_Expression, na.rm = TRUE))
+
+    # BarPlot
+    ggplot(df_barplot, aes(x = CellType, y = Gene_Expression)) +
+      geom_bar(stat="identity", fill="black") +
+      xlab("Predicted Cell Type") +
+      ylab("Average Expression") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/SingleR_HPCA/Barplot/", i, ".png"))
+    
+    # BoxPlot
+    ggplot(df, aes(x = CellType, y = Gene_Expression)) +
+      geom_boxplot() +
+      xlab("Predicted Cell Type") +
+      ylab("Expression Level") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/SingleR_HPCA/Boxplot/", i, ".png"))
+  }
+}
+```
+
+
+
+## SingleR - NHD
+```{r fig.width = 15, fig.height = 12}
+DoHeatmap(df_NHD, features=genes, group.by="predicted_celltype_NHD", cells=1:500, size=2, angle=90)
+```
+
+
+```{r}
+all_features <- rownames(df_NHD@assays$RNA@counts)
+for(i in genes){
+  if(i %in% all_features){
+    FeaturePlot(df_NHD, features=i, min.cutoff=1) + ggtitle(i)
+    ggsave(filename = paste0("../Plots/SingleR_NHD/UMAP/", i, ".png"))  
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    VlnPlot(df_NHD, features=i, group.by="predicted_celltype_NHD") + theme(axis.text.x = element_text(size = 6)) + NoLegend() + ggtitle(i)
+    ggsave(filename=paste0("../Plots/SingleR_NHD/VlnPlot/", i, ".png"))
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    df <- data.frame(CellType = df_NHD@meta.data$predicted_celltype_NHD,
+                 Gene_Expression = df_NHD@assays$RNA@counts[i, ])
+
+    # Average expression per cell type
+    df_barplot <- df %>%
+      group_by(CellType) %>%
+      summarise(Gene_Expression = mean(Gene_Expression, na.rm = TRUE))
+
+    # BarPlot
+    ggplot(df_barplot, aes(x = CellType, y = Gene_Expression)) +
+      geom_bar(stat="identity", fill="black") +
+      xlab("Predicted Cell Type") +
+      ylab("Average Expression") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/SingleR_NHD/Barplot/", i, ".png"))
+    
+    # BoxPlot
+    ggplot(df, aes(x = CellType, y = Gene_Expression)) +
+      geom_boxplot() +
+      xlab("Predicted Cell Type") +
+      ylab("Expression Level") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/SingleR_NHD/Boxplot/", i, ".png"))
+  }
+}
+```
+
+
+
+## SingleR - MI
+```{r fig.width = 15, fig.height = 12}
+DoHeatmap(df_NI, features=genes, group.by="predicted_celltype_NI", cells=1:500, size=2, angle=90)
+```
+
+
+```{r}
+all_features <- rownames(df_NI@assays$RNA@counts)
+for(i in genes){
+  if(i %in% all_features){
+    FeaturePlot(df_NI, features=i, min.cutoff=1) + ggtitle(i)
+    ggsave(filename = paste0("../Plots/SingleR_MI/UMAP/", i, ".png"))  
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    VlnPlot(df_NI, features=i, group.by="predicted_celltype_NI") + theme(axis.text.x = element_text(size = 6)) + NoLegend() + ggtitle(i)
+    ggsave(filename=paste0("../Plots/SingleR_MI/VlnPlot/", i, ".png"))
+  }
+}
+
+for(i in genes) {
+  if(i %in% all_features){
+    df <- data.frame(CellType = df_NI@meta.data$predicted_celltype_NI,
+                 Gene_Expression = df_NI@assays$RNA@counts[i, ])
+
+    # Average expression per cell type
+    df_barplot <- df %>%
+      group_by(CellType) %>%
+      summarise(Gene_Expression = mean(Gene_Expression, na.rm = TRUE))
+
+    # BarPlot
+    ggplot(df_barplot, aes(x = CellType, y = Gene_Expression)) +
+      geom_bar(stat="identity", fill="black") +
+      xlab("Predicted Cell Type") +
+      ylab("Average Expression") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/SingleR_MI/Barplot/", i, ".png"))
+    
+    # BoxPlot
+    ggplot(df, aes(x = CellType, y = Gene_Expression)) +
+      geom_boxplot() +
+      xlab("Predicted Cell Type") +
+      ylab("Expression Level") +
+      theme(axis.text.x = element_text(angle = 90, hjust = 1)) +
+      ggtitle(i)
+    
+    ggsave(filename=paste0("../Plots/SingleR_MI/Boxplot/", i, ".png")) NBBBBBBBBB
+  }
+}
+```
