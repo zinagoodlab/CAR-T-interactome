@@ -30,29 +30,6 @@ _ Single-cell data: 31,808 high-quality cells from on-treatment tumor biopsies
 - Cross-cohort validation across CAR T and chemoimmunotherapy patients
 - Clinical outcome correlation analysis
   
-CAR-T-interactome/  
-├── data/  
-│   ├── raw/                    # Raw single-cell data files  
-│   ├── processed/              # Processed count matrices  
-│   └── metadata/               # Clinical and sample metadata   
-├── scripts/  
-│   ├── preprocessing/          # Data quality control and normalization  
-│   ├── cell_annotation/        # Cell type identification and annotation  
-│   ├── interactome_analysis/   # Ligand-receptor interaction inference  
-│   ├── deconvolution/          # CIBERSORTx bulk RNA-seq analysis  
-│   └── validation/             # Cross-cohort validation analyses  
-├── results/  
-│   ├── figures/                # Main and supplementary figures  
-│   ├── tables/                 # Differential expression and pathway results  
-│   └── signatures/             # Gene signatures and biomarkers  
-├── environment/  
-│   ├── requirements.txt        # Python dependencies  
-│   ├── environment.yml         # Conda environment  
-│   └── sessionInfo.txt         # R package versions  
-└── docs/  
-    ├── analysis_workflow.md    # Step-by-step analysis guide  
-    └── data_availability.md    # Data access information  
-  
 **Data Availability**
 - Single-cell data: Available through GEO (accession pending) and dbGaP upon manuscript acceptance
 - Bulk RNA-seq data: Publicly available through TCGA and GEO (accession numbers in manuscript)
