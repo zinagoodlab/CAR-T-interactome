@@ -1,0 +1,2393 @@
+---
+title: "CCL8_CCL13_CombinedAnalysis"
+author: "Kelvin Mo"
+date: "2024-05-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(celldex)
+library(SingleR)
+library(SingleCellExperiment)
+library(tidyverse)
+library(factoextra)
+library(cluster)
+library(survival)
+library(survminer)
+library(GGally)
+library(dplyr)
+library(gridExtra)
+```
+
+```{r}
+ref <- readRDS("LymphomaEcotyper_scRNAseq_Tregs.rds")
+
+ref$predicted_celltype_MI[which(ref@meta.data$predicted_celltype_MI == "NK cells")] <- "T cells"
+
+ref$predicted_celltype_MI[which(ref@meta.data$predicted_celltype_MI == "Monocytes/cDC")] <- "Myeloid DC"
+ref$predicted_celltype_MI[which(ref@meta.data$predicted_celltype_MI == "pDC")] <- "Myeloid DC"
+
+ref$predicted_celltype_MI <- ifelse((ref@assays$RNA@counts["CCL13", ] > 0 & ref@assays$RNA@counts["CCL8", ] > 0), "CCL8+CCL13+ Myeloid DC", ref@meta.data$predicted_celltype_MI)
+
+table(ref@meta.data$predicted_celltype_MI)
+# B cells       CCL8+CCL13+ Myeloid DC             Myeloid DC                T cells                  Tregs 
+#    3711                            2                    757                  10164                   1301
+```
+
+```{r}
+dim(ref@meta.data)
+# 15935 cell samples x 20674 gene features x 10 columns
+ref
+```
+
+```{r}
+DimPlot(ref, group.by="predicted_celltype_MI")
+```
+
+```{r}
+# Define a function to prepare 10X HNSCC atlas data and write a matrix for CIBERSORTx.
+write_cibersortx_mx <- function(rna, lm22, metadata, metatype = "cell_type",
+																metasubtype = NULL, codex_full = NULL, split_niche = FALSE) {
+	# 1. Prepare signatures from LM22 microarray data for CIBERSORTx.
+	genes <- sort(rownames(rna))
+
+	# 2. Prepare 10X DLBCL atlas scRNA-seq data for CIBERSORTx.
+	cibersortx <- rna[genes, ]
+  metadata <- metadata[, c("seurat_clusters", metatype)]
+	colnames(metadata)[2] <- "metatype"
+	metadata$seurat_clusters <- as.vector(metadata$seurat_clusters)
+	metadata$metatype <- as.vector(metadata$metatype)
+
+
+	# Create a vector of sampled cell IDs (max size of all files in CIBERSORTx is 1 GB).
+  all_ids <- c()
+	for (cell_class in unique(metadata$metatype)) {
+		sampled_ids <- which(metadata$metatype == cell_class)
+		if (length(sampled_ids) > 1000) sampled_ids <- sample(sampled_ids, size = 1000, replace = FALSE)
+		all_ids <- c(all_ids, sampled_ids)
+	}
+
+	# Correct cell frequencies.
+	cibersortx <- cibersortx[, all_ids]
+	metadata <- metadata[all_ids, ]
+
+	## Write final matrix.
+	metadata <- t(metadata)
+	colnames(cibersortx) <- metadata[2, ]
+	names(dimnames(cibersortx)) <- c("GeneSymbol", "")
+	
+	write.table(cibersortx, file = "scRNAseq-ref-CIBERSORTx-CCL8-CCL13.txt", sep = "\t", quote = FALSE, row.names = TRUE, col.names = NA)
+	
+}
+
+
+
+########################## Process Data ########################################
+## Import CIBERSORT neutrophil gene expression signature from LM22 matrix.
+lm22 <- as.matrix(read.delim("LM22_source_GEPs.txt", row.names = 1))
+
+## Prepare 10X HNSCC atlas data for CIBERSORTx.
+DefaultAssay(ref) <- "SCT"
+rna <- GetAssayData(ref, assay = "SCT", layer = "data")
+rna[which(rna < 0)] <- 0
+
+## Add neutrophil gene expression signature and write data for CIBERSORTx
+## separated by cell type or REMI cluster.
+write_cibersortx_mx(rna, lm22, metadata = ref@meta.data, metatype = "predicted_celltype_MI")
+```
+
+
+## CIBERSORTx
+
+
+
+
+
+
+# CCL8CCL13+ Myeloid DCs / Total # of Cells
+## TCGA-DLBCL
+```{r}
+cell_fraction <- read.delim("TCGA-DLBCL/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- read.delim("../CART-Lymphoma/LBCL/TCGA.DLBC.info.tsv")
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "EXPR")
+
+head(bulk_metadata)
+```
+
+### OS
+```{r}
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(OS.time, OS) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(OS.time, OS) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in TCGA-DLBCL"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_TCGA.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(OS.time, OS) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in TCGA")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_TCGA.png"), g$plot, width=10, height=6)
+  
+  summary_cox
+```
+
+
+### DSS
+```{r}
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(DSS.time, DSS) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(DSS.time, DSS) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Disease-specific survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in TCGA-DLBCL"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_TCGA-DFS.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(DSS.time, DSS) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in TCGA")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_TCGA-DFS.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+```
+
+
+### DFI
+```{r}
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(DFI.time, DFI) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(DFI.time, DFI) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Disease-free interval", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in TCGA-DLBCL"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_TCGA-DFI.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(DFI.time, DFI) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in TCGA")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_TCGA-DFI.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+  head(bulk_metadata, 50)
+```
+
+
+
+### PFI
+```{r}
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(PFI.time, PFI) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(PFI.time, PFI) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Progression-free interval", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in TCGA-DLBCL"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_TCGA-PFI.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(PFI.time, PFI) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in TCGA")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_TCGA-PFI.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+
+## GSE34171
+```{r}
+cell_fraction <- read.delim("KM/GSE34171/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- read.delim("../CART-Lymphoma/LBCL/DLBCL.Monti_DLBCL.HGU133A_EntrezCDF.info.tsv")
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "Array")
+head(bulk_metadata)
+```
+
+
+```{r}
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light()+ theme(panel.border = element_rect(colour = "black", fill = NA, size = 1)), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE34171"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")+ theme(panel.border = element_rect(colour = "black", fill = NA, size = 1))
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3.5, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_TCGA-GSE34171.eps"), p, dpi=600, width=4.5, height = 5.5)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE34171")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  #ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE34171.eps"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+
+## GSE10846-RCHOP
+```{r}
+cell_fraction <- read.delim("GSE10846-RCHOP/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- read.delim("../CART-Lymphoma/LBCL/DLBCL.RCHOP.GSE10846.HGU133Plus2_EntrezCDF.info.tsv")
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "Array")
+head(bulk_metadata)
+```
+
+```{r}
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE10846-RCHOP"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE10846-RCHOP.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE10846-RCHOP")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE10846-RCHOP.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+
+### GSE10846-CHOP
+```{r}
+cell_fraction <- read.delim("KM/GSE10846-CHOP/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- read.delim("../CART-Lymphoma/LBCL/DLBCL.CHOP.GSE10846.HGU133Plus2_EntrezCDF.info.tsv")
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "Array")
+head(bulk_metadata)
+```
+
+```{r}
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.4)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.6)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE10846-CHOP"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE10846-CHOP.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE10846-CHOP")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE10846-CHOP.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+  
+```
+
+
+
+## GSE197977
+```{r}
+#   Data plots for selected GEO samples
+install.packages("BiocManager")
+install.packages("umap")
+BiocManager::install("GEOquery")
+library(GEOquery)
+library(limma)
+library(umap)
+
+# load series and platform data from GEO
+
+gset <- getGEO("GSE197977", GSEMatrix =TRUE, getGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL32026", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+ex <- exprs(gset)
+# log2 transform
+qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+          (qx[6]-qx[1] > 50 && qx[2] > 0)
+if (LogC) { ex[which(ex <= 0)] <- NaN
+  ex <- log2(ex) }
+
+# box-and-whisker plot
+dev.new(width=3+ncol(gset)/6, height=5)
+par(mar=c(7,4,2,1))
+title <- paste ("GSE197977", "/", annotation(gset), sep ="")
+boxplot(ex, boxwex=0.7, notch=T, main=title, outline=FALSE, las=2)
+dev.off()
+
+# expression value distribution plot
+par(mar=c(4,4,2,1))
+title <- paste ("GSE197977", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, main=title, legend=F)
+
+# mean-variance trend
+ex <- na.omit(ex) # eliminate rows with NAs
+plotSA(lmFit(ex), main="Mean variance trend, GSE197977")
+
+# UMAP plot (multi-dimensional scaling)
+ex <- ex[!duplicated(ex), ]  # remove duplicates
+ump <- umap(t(ex), n_neighbors = 15, random_state = 123)
+plot(ump$layout, main="UMAP plot, nbrs=15", xlab="", ylab="", pch=20, cex=1.5)
+install.packages("maptools")
+library("maptools")  # point labels without overlaps
+pointLabel(ump$layout, labels = rownames(ump$layout), method="SANN", cex=0.6)
+```
+
+```{r}
+heatmap(as.matrix(ex))
+```
+
+```{r}
+df <- pData(gset)
+head(df, 100)
+```
+
+```{r}
+metadata <- pData(gset)
+df_CART <- metadata[, c("title", "geo_accession", "bestresponse:ch1", "visit:ch1")]
+df_CART
+```
+
+
+# SCREENING AND BASELINE -> BASELINE
+```{r}
+df_baseline <- df_CART[df_CART['visit:ch1'] == "SCREENING" | df_CART['visit:ch1'] == "BASELINE", ]
+df_baseline
+```
+
+```{r}
+cell_fraction <- read.delim("KM/GSE197977-Baseline/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- merge(cell_fraction, df_baseline, by.x = "Mixture", by.y = "geo_accession")
+head(bulk_metadata)
+```
+
+```{r}
+CR <- df_baseline[df_baseline$'bestresponse:ch1' == 'CR', 'geo_accession']
+PR <- df_baseline[df_baseline$'bestresponse:ch1' == 'PR', 'geo_accession']
+SD <- df_baseline[df_baseline$'bestresponse:ch1' == 'SD', 'geo_accession']
+PD <- df_baseline[df_baseline$'bestresponse:ch1' == 'PD', 'geo_accession']
+
+CR_PR <- df_baseline[df_baseline$'bestresponse:ch1' == 'CR' | df_baseline$'bestresponse:ch1' == 'PR', 'geo_accession']
+SD_PD <- df_baseline[df_baseline$'bestresponse:ch1' == 'SD' | df_baseline$'bestresponse:ch1' == 'PD', 'geo_accession']
+
+bulk_metadata
+```
+
+```{r}
+ex_CR
+```
+
+
+```{r}
+library(Rfit)
+library(RColorBrewer)
+col <- colorRampPalette(c("blue","red"))(4)
+
+  ex_CR <- bulk_metadata[which(bulk_metadata$Mixture %in% CR), "CCL8"]
+  ex_PR <- bulk_metadata[which(bulk_metadata$Mixture %in% PR), "CCL8"]
+  ex_SD <- bulk_metadata[which(bulk_metadata$Mixture %in% SD), "CCL8"]
+  ex_PD <- bulk_metadata[which(bulk_metadata$Mixture %in% PD), "CCL8"]
+  ex_CR_PR <- bulk_metadata[which(bulk_metadata$Mixture %in% CR_PR), "CCL8"]
+  ex_SD_PD <- bulk_metadata[which(bulk_metadata$Mixture %in% SD_PD), "CCL8"]
+  
+  df_boxplot <- data.frame(
+  Response = factor(c(rep("CR", length(ex_CR)), 
+               rep("PR", length(ex_PR)), 
+               rep("SD", length(ex_SD)), 
+               rep("PD", length(ex_PD))),
+               levels = c("CR", "PR", "SD", "PD")),
+  expression = c(ex_CR, ex_PR, ex_SD, ex_PD)
+  )    
+
+  df_rfit <- df_boxplot
+  df_rfit$Response <- factor(df_rfit$Response, levels = c("CR", "PR", "SD", "PD"))
+  df_rfit$Response <- as.numeric(df_rfit$Response)
+  
+  rfit_model <- rfit(expression ~ Response, data = df_rfit)
+  rfit_results <- summary(rfit_model)
+  
+  mean <- mean(ex_SD_PD)/mean(ex_CR_PR)
+  
+  g <- ggplot(df_boxplot, aes(x = Response, y = expression, fill=Response)) +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_jitter(width = 0.2, height=0) + # Add jittered points
+    scale_fill_manual(values=col) +
+    labs(y="Propotion of CCL8+CCL13+ Myeloid/DCs", x= "Response") + theme_bw()
+  
+  
+  
+  df_boxplot2 <- data.frame(
+    Response = c(rep("CR+PR", length(ex_CR_PR)), 
+                 rep("SD+PD", length(ex_SD_PD))),
+    expression = c(ex_CR_PR, ex_SD_PD)
+  )
+  
+  wilcox_test_result <- wilcox.test(expression ~ Response, data = df_boxplot2, exact = FALSE)
+  
+  g2 <- ggplot(df_boxplot2, aes(x = Response, y = expression, fill=Response)) +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_jitter(width = 0.2, height=0) + # Add jittered points
+    scale_fill_manual(values=c("blue", "red")) +
+    labs(y="Propotion of CCL8+CCL13+ Myeloid/DCs", x= "Response") + theme_bw()
+  
+  
+  df_boxplot3 <- data.frame(
+    Response = c(rep("CR", length(ex_CR)), 
+                 rep("PD", length(ex_PD))),
+    expression = c(ex_CR, ex_PD)
+  )
+  
+  wilcox_test_result2 <- wilcox.test(expression ~ Response, data = df_boxplot3, exact = FALSE)
+  mean2 <- mean(ex_PD)/mean(ex_CR)
+  
+  labels <- c(paste0("CR (n=", length(ex_CR), ")"), paste0("PD (n=", length(ex_PD), ")"))
+  
+  g3 <- ggplot(df_boxplot3, aes(x = Response, y = expression, fill=Response)) +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_jitter(width = 0.2, height=0) + # Add jittered points
+    scale_fill_manual(values=c("blue", "red"), labels = labels) +
+    labs(y="Propotion of CCL8+CCL13+ Myeloid/DCs", x= "Response") + theme_bw()
+  
+  
+  new_data <- data.frame(
+    pvalue = rfit_results$coefficients[2, 'p.value'],
+    R2 = rfit_results$R2,
+    ratio = mean
+  )
+  new_data2 <- data.frame(
+    pvalue = wilcox_test_result$p.value,
+    R2 = "NA (PD+SD/CR+PR)",
+    ratio = mean
+  )
+  new_data3 <- data.frame(
+    pvalue = wilcox_test_result2$p.value,
+    R2 = "NA (PD/CR)",
+    ratio = mean2
+  )
+  
+  #ggsave(filename=paste0("../GSE197977_Baseline_CR-PR-SD-PD.png"), g, dpi=300, width=6, height=6)
+  
+  #ggsave(filename=paste0("../GSE197977_Baseline_CR+PR-SD+PD.png"), g2, dpi=300,width=4, height=6)
+  
+  ggsave(filename=paste0("../GSE197977_Baseline_CR-PD.eps"), g3, dpi=600,width=4, height=6)
+
+
+  new_data3
+
+```
+
+
+
+# GSE153439
+```{r}
+#   Data plots for selected GEO samples
+library(GEOquery)
+library(limma)
+library(umap)
+
+# load series and platform data from GEO
+
+gset <- getGEO("GSE153439", GSEMatrix =TRUE, getGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL28781", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+ex <- exprs(gset)
+# log2 transform
+qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+          (qx[6]-qx[1] > 50 && qx[2] > 0)
+if (LogC) { ex[which(ex <= 0)] <- NaN
+  ex <- log2(ex) }
+
+# box-and-whisker plot
+dev.new(width=3+ncol(gset)/6, height=5)
+par(mar=c(7,4,2,1))
+title <- paste ("GSE153439", "/", annotation(gset), sep ="")
+boxplot(ex, boxwex=0.7, notch=T, main=title, outline=FALSE, las=2)
+dev.off()
+
+# expression value distribution plot
+par(mar=c(4,4,2,1))
+title <- paste ("GSE153439", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, main=title, legend=F)
+
+# mean-variance trend
+ex <- na.omit(ex) # eliminate rows with NAs
+plotSA(lmFit(ex), main="Mean variance trend, GSE153439")
+
+# UMAP plot (multi-dimensional scaling)
+ex <- ex[!duplicated(ex), ]  # remove duplicates
+ump <- umap(t(ex), n_neighbors = 15, random_state = 123)
+plot(ump$layout, main="UMAP plot, nbrs=15", xlab="", ylab="", pch=20, cex=1.5)
+library("maptools")  # point labels without overlaps
+pointLabel(ump$layout, labels = rownames(ump$layout), method="SANN", cex=0.6)
+
+```
+
+```{r}
+pData(gset)
+GSE153439 <- pData(gset)
+GSE153439 <- GSE153439[, c("title", "geo_accession", "characteristics_ch1.1")]
+GSE153439
+```
+
+```{r}
+cell_fraction <- read.delim("KM/GSE153439/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- merge(cell_fraction, GSE153439, by.x = "Mixture", by.y = "geo_accession")
+head(bulk_metadata)
+
+DR <- GSE153439[GSE153439$'characteristics_ch1.1' == 'response: DR', 'geo_accession']
+NDR <- GSE153439[GSE153439$'characteristics_ch1.1' == 'response: NDR', 'geo_accession']
+```
+
+```{r}
+  ex_DR <- bulk_metadata[which(bulk_metadata$Mixture %in% DR), "CCL8"]
+  ex_NDR <- bulk_metadata[which(bulk_metadata$Mixture %in% NDR), "CCL8"]
+  
+  df_boxplot <- data.frame(
+    Response = factor(c(rep("DR", length(ex_DR)), 
+                        rep("NDR", length(ex_NDR))), 
+                      levels = c("DR", "NDR")),
+    expression = c(ex_DR, ex_NDR)
+  )
+  
+  mean <- mean(ex_NDR)/mean(ex_DR)
+
+  kw_test_result <- kruskal.test(expression ~ Response, data = df_boxplot)
+  labels <- c(paste0("DR (n=", length(ex_DR), ")"), paste0("NDR (n=", length(ex_NDR), ")"))
+  
+  g <- ggplot(df_boxplot, aes(x = Response, y = expression, fill=Response)) +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_jitter(width = 0.2, height=0) +
+    scale_fill_manual(values=c("blue", "red"), labels = labels) + 
+    labs(x = "Response", y = "Proportion of CCL8+CCL13+ Myeloid/DCs") +
+    theme_bw() 
+  
+  new_data <- data.frame(
+    pvalue = kw_test_result$p.value, 
+    ratio = mean
+  )
+  
+  ggsave(filename=paste0("../GSE153439_DR-NDR.eps"), g, width=4, height=6, dpi=600)
+
+
+  new_data
+
+```
+
+
+
+
+
+## GSE248835
+```{r}
+#   Data plots for selected GEO samples
+library(GEOquery)
+library(limma)
+library(umap)
+
+# load series and platform data from GEO
+
+gset <- getGEO("GSE248835", GSEMatrix =TRUE, getGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL33963", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+ex <- exprs(gset)
+# log2 transform
+qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+          (qx[6]-qx[1] > 50 && qx[2] > 0)
+if (LogC) { ex[which(ex <= 0)] <- NaN
+  ex <- log2(ex) }
+
+# box-and-whisker plot
+dev.new(width=3+ncol(gset)/6, height=5)
+par(mar=c(7,4,2,1))
+title <- paste ("GSE248835", "/", annotation(gset), sep ="")
+boxplot(ex, boxwex=0.7, notch=T, main=title, outline=FALSE, las=2)
+dev.off()
+
+# expression value distribution plot
+par(mar=c(4,4,2,1))
+title <- paste ("GSE248835", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, main=title, legend=F)
+
+# mean-variance trend
+ex <- na.omit(ex) # eliminate rows with NAs
+plotSA(lmFit(ex), main="Mean variance trend, GSE248835")
+
+# UMAP plot (multi-dimensional scaling)
+ex <- ex[!duplicated(ex), ]  # remove duplicates
+ump <- umap(t(ex), n_neighbors = 15, random_state = 123)
+plot(ump$layout, main="UMAP plot, nbrs=15", xlab="", ylab="", pch=20, cex=1.5)
+library("maptools")  # point labels without overlaps
+pointLabel(ump$layout, labels = rownames(ump$layout), method="SANN", cex=0.6)
+```
+
+```{r}
+metadata <- pData(gset)
+df <- metadata[, c("geo_accession", "visit:ch1", "event.free.survival.months:ch1", "event.free.survival.event:ch1")]
+head(metadata)
+length(metadata$`event.free.survival.event:ch1`[which(is.na(metadata$`event.free.survival.event:ch1`))])
+```
+
+```{r}
+cell_fraction <- read.delim("KM/GSE248835/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- metadata
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "geo_accession")
+head(bulk_metadata)
+```
+
+### Axi-cel + SOC
+```{r}
+  bulk_metadata$EFS_Time <- as.numeric(bulk_metadata$`event.free.survival.months:ch1`)
+  bulk_metadata$EFS_Status <- as.numeric(bulk_metadata$`event.free.survival.event:ch1`)
+  
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Event-free survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE248835"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE248835.eps"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE248835")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  #ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE248835.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+### Axi-cel 
+```{r}
+  bulk_metadata <- subset(bulk_metadata, subset = `treatment arm:ch1` == "Axicabtagene Ciloleucel")
+
+  bulk_metadata$EFS_Time <- as.numeric(bulk_metadata$`event.free.survival.months:ch1`)
+  bulk_metadata$EFS_Status <- as.numeric(bulk_metadata$`event.free.survival.event:ch1`)
+  
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light() + theme(panel.border = element_rect(colour = "black", fill = NA, size = 1)), xlab = "Time (years)", ylab = "Event-free survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE248835"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")+ theme(panel.border = element_rect(colour = "black", fill = NA, size = 1))
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3.5, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE248835.eps"), p, dpi=600, width=4.5, height = 5.5)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE248835")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  #ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE248835.eps"), g$plot, width=4.5, height=5.5)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+
+### SOC
+```{r}
+  bulk_metadata <- subset(bulk_metadata, subset = `treatment arm:ch1` == "Standard of Care Chemotherapy")
+
+  bulk_metadata$EFS_Time <- as.numeric(bulk_metadata$`event.free.survival.months:ch1`)
+  bulk_metadata$EFS_Status <- as.numeric(bulk_metadata$`event.free.survival.event:ch1`)
+  
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Event-free survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE248835"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE248835.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE248835")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE248835.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# CCL8CCL13+ Myeloid DCs / Total # of Myeloid DCs
+## TCGA-DLBCL
+```{r}
+cell_fraction <- read.delim("TCGA-DLBCL/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- read.delim("../CART-Lymphoma/LBCL/TCGA.DLBC.info.tsv")
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "EXPR")
+
+head(bulk_metadata)
+```
+
+```{r}
+head(bulk_metadata)
+```
+
+
+### OS
+```{r}
+  bulk_metadata[["CCL8"]] <- bulk_metadata[["CCL8"]] / (bulk_metadata[["CCL8"]] + bulk_metadata[["Myeloid"]])
+
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(OS.time, OS) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(OS.time, OS) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in TCGA-DLBCL"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_TCGA.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(OS.time, OS) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in TCGA")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_TCGA.png"), g$plot, width=10, height=6)
+  
+  
+  hr_pvalue
+  summary_cox
+```
+
+
+### DSS
+```{r}
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(DSS.time, DSS) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(DSS.time, DSS) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Disease-specific survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in TCGA-DLBCL"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_TCGA-DFS.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(DSS.time, DSS) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in TCGA")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_TCGA-DFS.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+```
+
+
+### DFI
+```{r}
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(DFI.time, DFI) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(DFI.time, DFI) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Disease-free interval", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in TCGA-DLBCL"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_TCGA-DFI.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(DFI.time, DFI) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in TCGA")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_TCGA-DFI.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+  head(bulk_metadata, 50)
+```
+
+
+
+### PFI
+```{r}
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(PFI.time, PFI) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(PFI.time, PFI) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Progression-free interval", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in TCGA-DLBCL"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_TCGA-PFI.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(PFI.time, PFI) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in TCGA")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_TCGA-PFI.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+
+## GSE34171
+```{r}
+cell_fraction <- read.delim("GSE34171/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- read.delim("../CART-Lymphoma/LBCL/DLBCL.Monti_DLBCL.HGU133A_EntrezCDF.info.tsv")
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "Array")
+head(bulk_metadata)
+```
+
+
+```{r}
+  bulk_metadata[["CCL8"]] <- bulk_metadata[["CCL8"]] / (bulk_metadata[["CCL8"]] + bulk_metadata[["Myeloid"]])
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE34171"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_TCGA-PFI.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE34171")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE34171.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+
+## GSE10846-RCHOP
+```{r}
+cell_fraction <- read.delim("GSE10846-RCHOP/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- read.delim("../CART-Lymphoma/LBCL/DLBCL.RCHOP.GSE10846.HGU133Plus2_EntrezCDF.info.tsv")
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "Array")
+head(bulk_metadata)
+```
+
+```{r}
+  bulk_metadata[["CCL8"]] <- bulk_metadata[["CCL8"]] / (bulk_metadata[["CCL8"]] + bulk_metadata[["Myeloid"]])
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE10846-RCHOP"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE10846-RCHOP.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE10846-RCHOP")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE10846-RCHOP.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+
+### GSE10846-CHOP
+```{r}
+cell_fraction <- read.delim("GSE10846-CHOP/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- read.delim("../CART-Lymphoma/LBCL/DLBCL.CHOP.GSE10846.HGU133Plus2_EntrezCDF.info.tsv")
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "Array")
+head(bulk_metadata)
+```
+
+```{r}
+  bulk_metadata[["CCL8"]] <- bulk_metadata[["CCL8"]] / (bulk_metadata[["CCL8"]] + bulk_metadata[["Myeloid"]])
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.4)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.6)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE10846-CHOP"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE10846-CHOP.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE10846-CHOP")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE10846-CHOP.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue 
+  summary_cox
+  
+  
+```
+
+
+
+## GSE197977
+```{r}
+#   Data plots for selected GEO samples
+install.packages("BiocManager")
+install.packages("umap")
+BiocManager::install("GEOquery")
+library(GEOquery)
+library(limma)
+library(umap)
+
+# load series and platform data from GEO
+
+gset <- getGEO("GSE197977", GSEMatrix =TRUE, getGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL32026", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+ex <- exprs(gset)
+# log2 transform
+qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+          (qx[6]-qx[1] > 50 && qx[2] > 0)
+if (LogC) { ex[which(ex <= 0)] <- NaN
+  ex <- log2(ex) }
+
+# box-and-whisker plot
+dev.new(width=3+ncol(gset)/6, height=5)
+par(mar=c(7,4,2,1))
+title <- paste ("GSE197977", "/", annotation(gset), sep ="")
+boxplot(ex, boxwex=0.7, notch=T, main=title, outline=FALSE, las=2)
+dev.off()
+
+# expression value distribution plot
+par(mar=c(4,4,2,1))
+title <- paste ("GSE197977", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, main=title, legend=F)
+
+# mean-variance trend
+ex <- na.omit(ex) # eliminate rows with NAs
+plotSA(lmFit(ex), main="Mean variance trend, GSE197977")
+
+# UMAP plot (multi-dimensional scaling)
+ex <- ex[!duplicated(ex), ]  # remove duplicates
+ump <- umap(t(ex), n_neighbors = 15, random_state = 123)
+plot(ump$layout, main="UMAP plot, nbrs=15", xlab="", ylab="", pch=20, cex=1.5)
+install.packages("maptools")
+library("maptools")  # point labels without overlaps
+pointLabel(ump$layout, labels = rownames(ump$layout), method="SANN", cex=0.6)
+```
+
+```{r}
+heatmap(as.matrix(ex))
+```
+
+```{r}
+df <- pData(gset)
+head(df, 100)
+```
+
+```{r}
+metadata <- pData(gset)
+df_CART <- metadata[, c("title", "geo_accession", "bestresponse:ch1", "visit:ch1")]
+df_CART
+```
+
+
+# SCREENING AND BASELINE -> BASELINE
+```{r}
+df_baseline <- df_CART[df_CART['visit:ch1'] == "SCREENING" | df_CART['visit:ch1'] == "BASELINE", ]
+df_baseline
+```
+
+```{r}
+cell_fraction <- read.delim("GSE197977-Baseline/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- merge(cell_fraction, df_baseline, by.x = "Mixture", by.y = "geo_accession")
+
+bulk_metadata[["CCL8"]] <- bulk_metadata[["CCL8"]] / (bulk_metadata[["CCL8"]] + bulk_metadata[["Myeloid"]])
+head(bulk_metadata)
+```
+
+```{r}
+CR <- df_baseline[df_baseline$'bestresponse:ch1' == 'CR', 'geo_accession']
+PR <- df_baseline[df_baseline$'bestresponse:ch1' == 'PR', 'geo_accession']
+SD <- df_baseline[df_baseline$'bestresponse:ch1' == 'SD', 'geo_accession']
+PD <- df_baseline[df_baseline$'bestresponse:ch1' == 'PD', 'geo_accession']
+
+CR_PR <- df_baseline[df_baseline$'bestresponse:ch1' == 'CR' | df_baseline$'bestresponse:ch1' == 'PR', 'geo_accession']
+SD_PD <- df_baseline[df_baseline$'bestresponse:ch1' == 'SD' | df_baseline$'bestresponse:ch1' == 'PD', 'geo_accession']
+
+bulk_metadata
+```
+
+
+```{r}
+library(Rfit)
+library(RColorBrewer)
+col <- colorRampPalette(c("blue","red"))(4)
+
+  bulk_metadata['GSM5935033', 'CCL8'] <- 1  
+
+  ex_CR <- bulk_metadata[which(bulk_metadata$Mixture %in% CR), "CCL8"]
+  ex_PR <- bulk_metadata[which(bulk_metadata$Mixture %in% PR), "CCL8"]
+  ex_SD <- bulk_metadata[which(bulk_metadata$Mixture %in% SD), "CCL8"]
+  ex_PD <- bulk_metadata[which(bulk_metadata$Mixture %in% PD), "CCL8"]
+  ex_CR_PR <- bulk_metadata[which(bulk_metadata$Mixture %in% CR_PR), "CCL8"]
+  ex_SD_PD <- bulk_metadata[which(bulk_metadata$Mixture %in% SD_PD), "CCL8"]
+  
+  df_boxplot <- data.frame(
+  Response = factor(c(rep("CR", length(ex_CR)), 
+               rep("PR", length(ex_PR)), 
+               rep("SD", length(ex_SD)), 
+               rep("PD", length(ex_PD))),
+               levels = c("CR", "PR", "SD", "PD")),
+  expression = c(ex_CR, ex_PR, ex_SD, ex_PD)
+  )    
+
+  df_rfit <- df_boxplot
+  df_rfit$Response <- factor(df_rfit$Response, levels = c("CR", "PR", "SD", "PD"))
+  df_rfit$Response <- as.numeric(df_rfit$Response)
+  
+  rfit_model <- rfit(expression ~ Response, data = df_rfit)
+  rfit_results <- summary(rfit_model)
+  
+  mean <- mean(ex_SD_PD)/mean(ex_CR_PR)
+  
+  g <- ggplot(df_boxplot, aes(x = Response, y = expression, fill=Response)) +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_jitter(width = 0.2, height=0) + # Add jittered points
+    scale_fill_manual(values=col) +
+    labs(y="Propotion of CCL8+CCL13+ Myeloid/DCs", x= "Response") + theme_bw()
+  
+  
+  
+  df_boxplot2 <- data.frame(
+    Response = c(rep("CR+PR", length(ex_CR_PR)), 
+                 rep("SD+PD", length(ex_SD_PD))),
+    expression = c(ex_CR_PR, ex_SD_PD)
+  )
+  
+  wilcox_test_result <- wilcox.test(expression ~ Response, data = df_boxplot2, exact = FALSE)
+  
+  g2 <- ggplot(df_boxplot2, aes(x = Response, y = expression, fill=Response)) +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_jitter(width = 0.2, height=0) + # Add jittered points
+    scale_fill_manual(values=c("blue", "red")) +
+    labs(y="Propotion of CCL8+CCL13+ Myeloid/DCs", x= "Response") + theme_bw()
+  
+  
+  df_boxplot3 <- data.frame(
+    Response = c(rep("CR", length(ex_CR)), 
+                 rep("PD", length(ex_PD))),
+    expression = c(ex_CR, ex_PD)
+  )
+  
+  wilcox_test_result2 <- wilcox.test(expression ~ Response, data = df_boxplot3, exact = FALSE)
+  mean2 <- mean(ex_PD)/mean(ex_CR)
+  
+  g3 <- ggplot(df_boxplot3, aes(x = Response, y = expression, fill=Response)) +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_jitter(width = 0.2, height=0) + # Add jittered points
+    scale_fill_manual(values=c("blue", "red")) +
+    labs(y="Propotion of CCL8+CCL13+ Myeloid/DCs", x= "Response") + theme_bw()
+  
+  
+  new_data <- data.frame(
+    pvalue = rfit_results$coefficients[2, 'p.value'],
+    R2 = rfit_results$R2,
+    ratio = mean
+  )
+  new_data2 <- data.frame(
+    pvalue = wilcox_test_result$p.value,
+    R2 = "NA (PD+SD/CR+PR)",
+    ratio = mean
+  )
+  new_data3 <- data.frame(
+    pvalue = wilcox_test_result2$p.value,
+    R2 = "NA (PD/CR)",
+    ratio = mean2
+  )
+  
+  ggsave(filename=paste0("../GSE197977_Baseline_CR-PR-SD-PD.png"), g, dpi=300, width=6, height=6)
+  
+  ggsave(filename=paste0("../GSE197977_Baseline_CR+PR-SD+PD.png"), g2, dpi=300,width=4, height=6)
+  
+  ggsave(filename=paste0("../GSE197977_Baseline_CR-PD.png"), g3, dpi=300,width=4, height=6)
+
+
+  new_data3
+  mean(ex_CR_PR)
+
+```
+
+
+
+# GSE153439
+```{r}
+#   Data plots for selected GEO samples
+library(GEOquery)
+library(limma)
+library(umap)
+
+# load series and platform data from GEO
+
+gset <- getGEO("GSE153439", GSEMatrix =TRUE, getGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL28781", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+ex <- exprs(gset)
+# log2 transform
+qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+          (qx[6]-qx[1] > 50 && qx[2] > 0)
+if (LogC) { ex[which(ex <= 0)] <- NaN
+  ex <- log2(ex) }
+
+# box-and-whisker plot
+dev.new(width=3+ncol(gset)/6, height=5)
+par(mar=c(7,4,2,1))
+title <- paste ("GSE153439", "/", annotation(gset), sep ="")
+boxplot(ex, boxwex=0.7, notch=T, main=title, outline=FALSE, las=2)
+dev.off()
+
+# expression value distribution plot
+par(mar=c(4,4,2,1))
+title <- paste ("GSE153439", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, main=title, legend=F)
+
+# mean-variance trend
+ex <- na.omit(ex) # eliminate rows with NAs
+plotSA(lmFit(ex), main="Mean variance trend, GSE153439")
+
+# UMAP plot (multi-dimensional scaling)
+ex <- ex[!duplicated(ex), ]  # remove duplicates
+ump <- umap(t(ex), n_neighbors = 15, random_state = 123)
+plot(ump$layout, main="UMAP plot, nbrs=15", xlab="", ylab="", pch=20, cex=1.5)
+library("maptools")  # point labels without overlaps
+pointLabel(ump$layout, labels = rownames(ump$layout), method="SANN", cex=0.6)
+
+```
+
+```{r}
+pData(gset)
+GSE153439 <- pData(gset)
+GSE153439 <- GSE153439[, c("title", "geo_accession", "characteristics_ch1.1")]
+GSE153439
+```
+
+```{r}
+cell_fraction <- read.delim("GSE153439/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- merge(cell_fraction, GSE153439, by.x = "Mixture", by.y = "geo_accession")
+head(bulk_metadata)
+
+DR <- GSE153439[GSE153439$'characteristics_ch1.1' == 'response: DR', 'geo_accession']
+NDR <- GSE153439[GSE153439$'characteristics_ch1.1' == 'response: NDR', 'geo_accession']
+```
+
+```{r}
+  bulk_metadata[["CCL8"]] <- bulk_metadata[["CCL8"]] / (bulk_metadata[["CCL8"]] + bulk_metadata[["Myeloid"]])
+
+  ex_DR <- bulk_metadata[which(bulk_metadata$Mixture %in% DR), "CCL8"]
+  ex_NDR <- bulk_metadata[which(bulk_metadata$Mixture %in% NDR), "CCL8"]
+  
+  df_boxplot <- data.frame(
+    Response = factor(c(rep("DR", length(ex_DR)), 
+                        rep("NDR", length(ex_NDR))), 
+                      levels = c("DR", "NDR")),
+    expression = c(ex_DR, ex_NDR)
+  )
+  
+  mean <- mean(ex_NDR)/mean(ex_DR)
+
+  kw_test_result <- kruskal.test(expression ~ Response, data = df_boxplot)
+  labels <- c(paste0("DR (n=", length(ex_DR), ")"), paste0("NDR (n=", length(ex_NDR), ")"))
+  
+  g <- ggplot(df_boxplot, aes(x = Response, y = expression, fill=Response)) +
+    geom_boxplot(outlier.shape=NA) + 
+    geom_jitter(width = 0.2, height=0) +
+    scale_fill_manual(values=c("blue", "red"), labels = labels) + 
+    labs(x = "Response", y = "Proportion of CCL8+CCL13+ Myeloid/DCs") +
+    theme_bw() 
+  
+  new_data <- data.frame(
+    pvalue = kw_test_result$p.value, 
+    ratio = mean
+  )
+  
+  ggsave(filename=paste0("../GSE153439_DR-NDR.png"), g, width=6, height=6, dpi=600)
+
+
+  new_data
+  
+  mean(ex_NDR) / mean(ex_DR)
+  mean(ex_DR)
+
+```
+
+
+
+
+
+## GSE248835
+```{r}
+#   Data plots for selected GEO samples
+library(GEOquery)
+library(limma)
+library(umap)
+
+# load series and platform data from GEO
+
+gset <- getGEO("GSE248835", GSEMatrix =TRUE, getGPL=FALSE)
+if (length(gset) > 1) idx <- grep("GPL33963", attr(gset, "names")) else idx <- 1
+gset <- gset[[idx]]
+
+ex <- exprs(gset)
+# log2 transform
+qx <- as.numeric(quantile(ex, c(0., 0.25, 0.5, 0.75, 0.99, 1.0), na.rm=T))
+LogC <- (qx[5] > 100) ||
+          (qx[6]-qx[1] > 50 && qx[2] > 0)
+if (LogC) { ex[which(ex <= 0)] <- NaN
+  ex <- log2(ex) }
+
+# box-and-whisker plot
+dev.new(width=3+ncol(gset)/6, height=5)
+par(mar=c(7,4,2,1))
+title <- paste ("GSE248835", "/", annotation(gset), sep ="")
+boxplot(ex, boxwex=0.7, notch=T, main=title, outline=FALSE, las=2)
+dev.off()
+
+# expression value distribution plot
+par(mar=c(4,4,2,1))
+title <- paste ("GSE248835", "/", annotation(gset), " value distribution", sep ="")
+plotDensities(ex, main=title, legend=F)
+
+# mean-variance trend
+ex <- na.omit(ex) # eliminate rows with NAs
+plotSA(lmFit(ex), main="Mean variance trend, GSE248835")
+
+# UMAP plot (multi-dimensional scaling)
+ex <- ex[!duplicated(ex), ]  # remove duplicates
+ump <- umap(t(ex), n_neighbors = 15, random_state = 123)
+plot(ump$layout, main="UMAP plot, nbrs=15", xlab="", ylab="", pch=20, cex=1.5)
+library("maptools")  # point labels without overlaps
+pointLabel(ump$layout, labels = rownames(ump$layout), method="SANN", cex=0.6)
+```
+
+```{r}
+metadata <- pData(gset)
+df <- metadata[, c("geo_accession", "visit:ch1", "event.free.survival.months:ch1", "event.free.survival.event:ch1")]
+head(metadata)
+length(metadata$`event.free.survival.event:ch1`[which(is.na(metadata$`event.free.survival.event:ch1`))])
+```
+
+```{r}
+cell_fraction <- read.delim("KM/GSE248835/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- metadata
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "geo_accession")
+head(bulk_metadata)
+```
+
+### Axi-cel + SOC
+```{r}
+  bulk_metadata[["CCL8"]] <- bulk_metadata[["CCL8"]] / (bulk_metadata[["CCL8"]] + bulk_metadata[["Myeloid"]])
+
+  bulk_metadata$EFS_Time <- as.numeric(bulk_metadata$`event.free.survival.months:ch1`)
+  bulk_metadata$EFS_Status <- as.numeric(bulk_metadata$`event.free.survival.event:ch1`)
+  
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Event-free survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE248835"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE248835.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE248835")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE248835.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+### Axi-cel 
+```{r}
+  bulk_metadata <- subset(bulk_metadata, subset = `treatment arm:ch1` == "Axicabtagene Ciloleucel")
+
+  bulk_metadata$EFS_Time <- as.numeric(bulk_metadata$`event.free.survival.months:ch1`)
+  bulk_metadata$EFS_Status <- as.numeric(bulk_metadata$`event.free.survival.event:ch1`)
+  
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.35)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.65)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High", ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Event-free survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE248835"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE248835.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE248835")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE248835.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+
+### SOC
+```{r}
+  bulk_metadata[["CCL8"]] <- bulk_metadata[["CCL8"]] / (bulk_metadata[["CCL8"]] + bulk_metadata[["Myeloid"]])
+  bulk_metadata <- subset(bulk_metadata, subset = `treatment arm:ch1` == "Standard of Care Chemotherapy")
+
+  bulk_metadata$EFS_Time <- as.numeric(bulk_metadata$`event.free.survival.months:ch1`)
+  bulk_metadata$EFS_Status <- as.numeric(bulk_metadata$`event.free.survival.event:ch1`)
+  
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Event-free survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE248835"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE248835.eps"), p, dpi=600, width=4.5, height = 5.5)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(EFS_Time, EFS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE248835")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE248835.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## GSE10846
+## GSE10846-RCHOP
+```{r}
+cell_fraction <- read.delim("KM/GSE10846-RCHOP/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- read.delim("../CART-Lymphoma/LBCL/DLBCL.RCHOP.GSE10846.HGU133Plus2_EntrezCDF.info.tsv")
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "Array")
+head(bulk_metadata)
+```
+
+```{r}
+  bulk_metadata[["CCL8"]] <- bulk_metadata[["CCL8"]] / (bulk_metadata[["CCL8"]] + bulk_metadata[["Myeloid"]])
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.25)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.75)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE10846-RCHOP"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE10846-RCHOP.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE10846-RCHOP")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE10846-RCHOP.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue
+  summary_cox
+  
+```
+
+
+### GSE10846-CHOP
+```{r}
+cell_fraction2 <- read.delim("KM/GSE10846-CHOP/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata2 <- read.delim("../CART-Lymphoma/LBCL/DLBCL.CHOP.GSE10846.HGU133Plus2_EntrezCDF.info.tsv")
+bulk_metadata2 <- merge(cell_fraction2, bulk_metadata2, by.x = "Mixture", by.y = "Array")
+head(bulk_metadata2)
+```
+
+```{r}
+bulk_metadata <- bulk_metadata[,c('CCL8','Myeloid','OS_Status','OS_Time')]
+bulk_metadata2 <- bulk_metadata2[,c('CCL8','Myeloid','OS_Status','OS_Time')]
+bulk_metadata <- rbind(bulk_metadata, bulk_metadata2)
+```
+
+
+
+```{r}
+  #bulk_metadata[["CCL8"]] <- bulk_metadata[["CCL8"]] / (bulk_metadata[["CCL8"]] + bulk_metadata[["Myeloid"]])
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.4)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.6)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("red", "blue"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light() + theme(panel.border = element_rect(colour = "black", fill = NA, size = 1)), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) +  ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE10846-CHOP"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none") + theme(panel.border = element_rect(colour = "black", fill = NA, size = 1))
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(3.5, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE10846.eps"), p, dpi=600, width=4.5, height = 5.5)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE10846-CHOP")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  #ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE10846-CHOP.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue 
+  summary_cox
+  
+  
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Combined 
+
+## GSE10846-RCHOP
+```{r}
+cell_fraction <- read.delim("GSE10846-RCHOP/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata <- read.delim("../CART-Lymphoma/LBCL/DLBCL.RCHOP.GSE10846.HGU133Plus2_EntrezCDF.info.tsv")
+bulk_metadata <- merge(cell_fraction, bulk_metadata, by.x = "Mixture", by.y = "Array")
+head(bulk_metadata)
+```
+
+### GSE10846-CHOP
+```{r}
+cell_fraction2 <- read.delim("GSE10846-CHOP/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata2 <- read.delim("../CART-Lymphoma/LBCL/DLBCL.CHOP.GSE10846.HGU133Plus2_EntrezCDF.info.tsv")
+bulk_metadata2 <- merge(cell_fraction2, bulk_metadata2, by.x = "Mixture", by.y = "Array")
+head(bulk_metadata2)
+```
+
+## GSE34171
+```{r}
+cell_fraction3 <- read.delim("GSE34171/CIBERSORTx_Cell-Fractions.txt")
+bulk_metadata3 <- read.delim("../CART-Lymphoma/LBCL/DLBCL.Monti_DLBCL.HGU133A_EntrezCDF.info.tsv")
+bulk_metadata3 <- merge(cell_fraction3, bulk_metadata3, by.x = "Mixture", by.y = "Array")
+head(bulk_metadata3)
+```
+
+
+```{r}
+bulk_metadata <- bulk_metadata[,c('CCL8','Myeloid','OS_Status','OS_Time')]
+bulk_metadata2 <- bulk_metadata2[,c('CCL8','Myeloid','OS_Status','OS_Time')]
+bulk_metadata3 <- bulk_metadata3[,c('CCL8', 'Myeloid', 'OS_Status', 'OS_Time')]
+bulk_metadata <- rbind(bulk_metadata, bulk_metadata2, bulk_metadata3)
+```
+
+
+
+```{r}
+  bulk_metadata[["CCL8"]] <- bulk_metadata[["CCL8"]] / (bulk_metadata[["CCL8"]] + bulk_metadata[["Myeloid"]])
+  # Get the median of the expression level 
+  median <- median(as.numeric(bulk_metadata[["CCL8"]]))
+  bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[["CCL8"]]) > median, "High", "Low")
+  #low_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.4)
+  #high_threshold <- quantile(as.numeric(bulk_metadata[["CCL8"]]), 0.6)
+  #bulk_metadata$Expression_Level <- ifelse(as.numeric(bulk_metadata[['CCL8']]) >= high_threshold, "High",
+                                            # ifelse(as.numeric(bulk_metadata[['CCL8']]) <= low_threshold, "Low", NA))
+  
+  # Fit the survival model
+  fit <- survfit(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata, conf.int = 0.95)
+  
+  # Get P valueS
+  logrank_test <- survdiff(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  p_val <- pchisq(logrank_test$chisq, length(logrank_test$n) - 1, lower.tail = FALSE)
+  
+    # Plot the survival curve
+  p <- ggsurvplot(fit, data=bulk_metadata, size=1,  palette=c("#fc0001", "#0000fc"), conf.int=TRUE, pval=FALSE, pval.digits = 4, risk.table=TRUE, risk.table.col = "strata", legend.labs=c("High", "Low"), risk.table.height = 0.20, ggtheme = theme_light(), xlab = "Time (years)", ylab = "Overall survival", conf.int.style = "step", risk.table.title="Number at risk", risk.table.fontsize=3.25) + ggtitle(paste("SurvPlot of CCL8CCL13 cells in GSE10846-CHOP"))
+  
+  # Arrange plot and risk table title
+  p$table <- p$table + ggtitle("Number at Risk") + theme(legend.position = "none")
+  p <- arrangeGrob(p$plot, p$table, ncol=1, heights=c(4, 1))
+  
+  # Save the plot locally
+  ggsave(filename=paste0("../KM_CCL8-CCL13_GSE10846-CHOP.png"), p, dpi=600, width=6, height = 6)
+  
+  # Cox regression
+  cox_model <- coxph(Surv(OS_Time, OS_Status) ~ Expression_Level, data = bulk_metadata)
+  # Get the predicted survival probabilities
+  predicted_survival <- survfit(cox_model, data=bulk_metadata)
+  
+  # Summarize the Cox model
+  summary_cox <- summary(cox_model)
+  
+  # Get the hazard ratio for 'high' compared to 'low'
+  hr <- 1/exp(coef(summary_cox))
+  # Now 'hr' will show the hazard ratio of 'high' expression relative to 'low' expression
+  
+  hr_pvalue <- summary_cox$coefficients[, "Pr(>|z|)"]
+  
+  # Create the survival plot
+  g <- ggsurvplot(predicted_survival, xlab="Time (years)", size=1, ylab="Survival Probability", palette="#CC0000", conf.int.style = "step")
+  g$plot <- g$plot + ggtitle(paste("Cox Model of CCL8CCL13 in GSE10846-CHOP")) + annotate("text", x = 2, y = 0.2, label = sprintf("%.3f, %.3f", hr[1], hr_pvalue), size = 4, hjust = "left", vjust = "bottom")
+  # Save the plot locally
+  ggsave(filename=paste0("../CoxRegression_CCL8CCL13_GSE10846-CHOP.png"), g$plot, width=10, height=6)
+  
+  p_val
+  hr[1]
+  hr_pvalue 
+  summary_cox
+  
+  
+```
+
+
+

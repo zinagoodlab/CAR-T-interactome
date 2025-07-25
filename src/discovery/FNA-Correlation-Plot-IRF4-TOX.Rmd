@@ -1,0 +1,1894 @@
+---
+title: "FNA-Correlation-Plot-IRF4-TOX"
+author: "Kelvin Mo"
+date: "2024-08-23"
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+gc()
+library(ggplot2)
+library(Seurat)
+library(dplyr)
+```
+
+```{r}
+df <- readRDS("FNA_InteractomeAnalysis_3.rds")
+
+df$interactome_group[which(df@meta.data$interactome_group == "Tcon")] <- "Tconv"
+df$interactome_group[which(df@meta.data$interactome_group == "Myeloid DC")] <- "Myeloid/DC"
+
+df@meta.data$Response_30d[which(df@meta.data$Response_30d == "CR")] <- "OR"
+df@meta.data$Response_30d[which(df@meta.data$Response_30d == "PR")] <- "OR"
+df@meta.data$Response_30d[which(df@meta.data$Response_30d == "SD")] <- "NR"
+df@meta.data$Response_30d[which(df@meta.data$Response_30d == "PD")] <- "NR"
+
+df@meta.data$Response_3m[which(df@meta.data$Response_3m == "CR")] <- "DR"
+df@meta.data$Response_3m[which(df@meta.data$Response_3m == "PR")] <- "DR"
+df@meta.data$Response_3m[which(df@meta.data$Response_3m == "SD")] <- "NDR"
+df@meta.data$Response_3m[which(df@meta.data$Response_3m == "PD")] <- "NDR"
+
+df@meta.data$Response_6m[which(df@meta.data$Response_6m == "CR")] <- "DR"
+df@meta.data$Response_6m[which(df@meta.data$Response_6m == "PR")] <- "DR"
+df@meta.data$Response_6m[which(df@meta.data$Response_6m == "SD")] <- "NDR"
+df@meta.data$Response_6m[which(df@meta.data$Response_6m == "PD")] <- "NDR"
+```
+
+```{r}
+genes_of_interest <- c("IRF4", "IRF8", "TOX", "NR4A2")
+sct_data <- FetchData(df, vars = genes_of_interest, slot = "data", assay = "SCT")
+data <- cbind(df@meta.data, sct_data)
+sct_data
+```
+
+
+```{r}
+ggplot(data, aes(x = IRF4, y = TOX, color = Response_3m, shape = construct)) +
+  geom_point(size = 3) +  # Adjust point size as needed
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Set custom colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +  # Circle for Axi-cel, Triangle for Bispecific CD19/22
+  geom_smooth(method = "lm", se = TRUE, color = "black", linetype = "dashed") +  # Add regression line
+  theme_minimal() +  # Clean theme
+  labs(x = "IRF4", y = "TOX", color = "Response at 3 months", shape = "Construct") +  # Axis and legend labels
+  ggtitle("Clustering Plot with Regression Line")  # Title
+```
+
+```{r}
+correlation_test <- cor.test(data$IRF4, data$TOX)
+print(correlation_test)
+```
+
+
+```{r}
+genes_of_interest <- c("IRF4", "IRF8", "TOX", "NR4A2")
+sct_data <- FetchData(df, vars = genes_of_interest, slot = "count", assay = "SCT")
+data <- cbind(df@meta.data, sct_data)
+```
+
+
+```{r}
+# Hexbin plot to show the density of points
+library(ggplot2)
+library(RColorBrewer)
+
+ggplot(data, aes(x = IRF4, y = TOX)) +
+  geom_hex(bins = 30) +  # Create hexagonal bins
+  scale_fill_gradientn(colours = brewer.pal(9, "Blues"), name = "Count", limits = c(0, 4000)) +  # Color gradient with limits
+  geom_smooth(method = "lm", color = "black", linetype = "dashed", size = 1, se = FALSE) +  # Regression line
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "IRF4 Expression", y = "TOX Expression", title = "Hexbin Plot of IRF4 vs TOX Expression")  # Labels and title
+
+```
+
+
+```{r}
+# Pair plot to show scatter plots for all variable pairs
+library(GGally)
+
+# Subset data for the pair plot
+pair_data <- data[, c("IRF4", "IRF8", "TOX", "NR4A2", "Response_3m")]
+
+ggpairs(pair_data, aes(color = Response_3m), 
+        upper = list(continuous = "cor"), # Shows correlation coefficients in upper panels
+        lower = list(continuous = "points")) +  # Scatter plot in lower panels
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Custom colors for response categories
+  theme_minimal()  # Clean theme
+
+```
+
+
+###################################### START ######################################
+#################################### CELL LEVEL ####################################
+
+
+```{r}
+genes_of_interest <- c("IRF4", "IRF8", "TOX", "NR4A2")
+sct_data <- FetchData(df, vars = genes_of_interest, slot = "data", assay = "SCT")
+sct_counts <- FetchData(df, vars = genes_of_interest, slot = "counts", assay = "SCT")
+colnames(sct_counts) <- paste0(genes_of_interest, "_count")
+merged_data <- cbind(df@meta.data, sct_data, sct_counts)
+merged_data_CART <- merged_data %>% filter(interactome_group2 == "CAR+ Tcon" | interactome_group2 == "CAR+ Treg")
+
+data <- merged_data_CART %>% filter(IRF4_count > 0 | TOX_count > 0)
+```
+
+# SCT/IRF4-TOX/Response_30d/cell
+```{r}
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(IRF4, TOX), p.value = cor.test(IRF4, TOX)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_30d, construct) %>%
+  summarize(cor = cor(IRF4, TOX), p.value = cor.test(IRF4, TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with separate regression lines for each response group
+p <- ggplot(data, aes(x = IRF4, y = TOX, color = Response_30d, shape=construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Separate regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Custom colors for response categories
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Different linetypes for each group
+  theme_minimal(base_size = 14) +  # Minimal theme for readability
+  labs(x = "IRF4 Expression", y = "TOX Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/IRF4-TOX/Response_30d/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p
+
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 7, height = 6)
+```
+
+
+# SCT/IRF4-TOX/Response_3m/cell
+```{r}
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(IRF4, TOX), p.value = cor.test(IRF4, TOX)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_3m, construct) %>%
+  summarize(cor = cor(IRF4, TOX), p.value = cor.test(IRF4, TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = IRF4, y = TOX, color = Response_3m, shape = construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "IRF4 Expression", y = "TOX Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("Scatter Plot of IRF4 vs TOX with Correlation by Response") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+
+
+
+```{r}
+data <- merged_data_CART %>% filter(IRF8_count > 0 | NR4A2_count > 0)
+```
+
+
+# SCT/IRF8-NR4A2/Response_30d/cell
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(IRF8, NR4A2), p.value = cor.test(IRF8, NR4A2)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_30d, construct) %>%
+  summarize(cor = cor(IRF8, NR4A2), p.value = cor.test(IRF8, NR4A2)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = IRF8, y = NR4A2, color = Response_30d, shape = construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "IRF8 Expression", y = "NR4A2 Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/IRF8-NR4A2/Response_30d/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+# SCT/IRF8-NR4A2/Response_3m/cell
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(IRF8, NR4A2), p.value = cor.test(IRF8, NR4A2)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_3m, construct) %>%
+  summarize(cor = cor(IRF8, NR4A2), p.value = cor.test(IRF8, NR4A2)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = IRF8, y = NR4A2, color = Response_3m, shape = construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "IRF8 Expression", y = "NR4A2 Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/IRF8-NR4A2/Response_3m/cell")+
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+
+
+
+
+
+
+```{r}
+data <- merged_data_CART %>% filter(IRF4_count > 0 | IRF8_count > 0)
+```
+
+
+# SCT/IRF8-IRF4/Response_30d/cell
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(IRF4, IRF8), p.value = cor.test(IRF4, IRF8)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_30d, construct) %>%
+  summarize(cor = cor(IRF4, IRF8), p.value = cor.test(IRF4, IRF8)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = IRF4, y = IRF8, color = Response_30d, shape = construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "IRF4 Expression", y = "IRF8 Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/IRF4-IRF8/Response_30d/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+# SCT/IRF8-IRF4/Response_3m/cell
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(IRF8, IRF4), p.value = cor.test(IRF8, IRF4)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_3m, construct) %>%
+  summarize(cor = cor(IRF8, IRF4), p.value = cor.test(IRF8, IRF4)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = IRF8, y = IRF4, color = Response_3m, shape = construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "IRF8 Expression", y = "IRF4 Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/IRF8-IRF4/Response_3m/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+
+
+
+
+
+
+
+
+```{r}
+data <- merged_data_CART %>% filter(IRF4_count > 0 | NR4A2_count > 0)
+```
+
+
+# SCT/IRF4-NR4A2/Response_30d/cell
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(IRF4, NR4A2), p.value = cor.test(IRF4, NR4A2)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_30d, construct) %>%
+  summarize(cor = cor(IRF4, NR4A2), p.value = cor.test(IRF4, NR4A2)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = NR4A2, y = IRF4, color = Response_30d, shape = construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "NR4A2 Expression", y = "IRF4 Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/NR4A2-IRF4/Response_30d/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+# SCT/NR4A2-IRF4/Response_3m/cell
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(NR4A2, IRF4), p.value = cor.test(NR4A2, IRF4)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_3m, construct) %>%
+  summarize(cor = cor(NR4A2, IRF4), p.value = cor.test(NR4A2, IRF4)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = NR4A2, y = IRF4, color = Response_3m, shape = construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "NR4A2 Expression", y = "IRF4 Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/NR4A2-IRF4/Response_3m/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+
+
+
+
+
+
+
+
+```{r}
+data <- merged_data_CART %>% filter(IRF8_count > 0 | TOX_count > 0)
+```
+
+
+# SCT/IRF8-TOX/Response_30d/cell
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(IRF8, TOX), p.value = cor.test(IRF8, TOX)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_30d, construct) %>%
+  summarize(cor = cor(IRF8, TOX), p.value = cor.test(IRF8, TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = IRF8, y = TOX, color = Response_30d, shape = construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "IRF8 Expression", y = "TOX Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/IRF8-TOX/Response_30d/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+# SCT/IRF8-TOX/Response_3m/cell
+```{r}
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(IRF8, TOX), p.value = cor.test(IRF8, TOX)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_3m, construct) %>%
+  summarize(cor = cor(IRF8, TOX), p.value = cor.test(IRF8, TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = IRF8, y = TOX, color = Response_3m, shape = construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "IRF8 Expression", y = "TOX Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/IRF8-TOX/Response_3m/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+data <- merged_data_CART %>% filter(NR4A2_count > 0 | TOX_count > 0)
+```
+
+
+# SCT/NR4A2-TOX/Response_30d/cell
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(NR4A2, TOX), p.value = cor.test(NR4A2, TOX)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_30d, construct) %>%
+  summarize(cor = cor(NR4A2, TOX), p.value = cor.test(NR4A2, TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = NR4A2, y = TOX, color = Response_30d, shape = construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "NR4A2 Expression", y = "TOX Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/NR4A2-TOX/Response_30d/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+# SCT/NR4A2-TOX/Response_3m/cell
+```{r}
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(NR4A2, TOX), p.value = cor.test(NR4A2, TOX)$p.value)
+
+print(correlations)
+
+correlations <- data %>%
+  group_by(Response_3m, construct) %>%
+  summarize(cor = cor(NR4A2, TOX), p.value = cor.test(NR4A2, TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = NR4A2, y = TOX, color = Response_3m, shape = construct)) +
+  geom_jitter(size = 2.5, alpha = 1, width = 0.5, height = 0.5) +
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "NR4A2 Expression", y = "TOX Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/NR4A2-TOX/Response_3m/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#################################### PATIENT LEVEL ####################################
+```{r}
+genes_of_interest <- c("IRF4", "IRF8", "TOX", "NR4A2")
+sct_data <- FetchData(df, vars = genes_of_interest, slot = "data", assay = "SCT")
+merged_data <- cbind(df@meta.data, sct_data)
+merged_data_CART <- merged_data %>% filter(interactome_group2 == "CAR+ Tcon" | interactome_group2 == "CAR+ Treg")
+```
+
+```{r}
+data <- merged_data_CART %>%
+  group_by(patient_id) %>%
+  summarise(
+    Age = first(Age),
+    Sex = first(Sex),
+    construct = first(construct),
+    Disease_type = first(Disease_type),
+    High_LDH = first(High_LDH),
+    Response_30d = first(Response_30d),  
+    Response_3m = first(Response_3m),    
+    Response_6m = first(Response_6m),   
+    Max_CRS = first(Max_CRS),
+    Max_ICANS = first(Max_ICANS),
+    CMV_Pre_Ab = first(CMV_Pre_Ab),
+    CMV_PCR_First_28 = first(CMV_PCR_First_28),
+    CMV_PCR_D29_to_D180 = first(CMV_PCR_D29_to_D180),
+    Number_CART = n(),
+    Percent_IRF4 = sum(IRF4) / n() ,
+    Percent_IRF8 = sum(IRF8) / n() ,
+    Percent_TOX = sum(TOX) / n() ,
+    Percent_NR4A2 = sum(NR4A2) / n()
+  )
+
+head(data, 20)
+
+#data <- data %>%
+  #filter(Number_CART > 1)
+
+
+```
+
+
+
+
+
+# SCT/IRF4-TOX/Response_30d/patient
+```{r}
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_TOX, Percent_IRF4), p.value = cor.test(Percent_TOX, Percent_IRF4)$p.value)
+
+print(correlations)
+
+correlation_result <- cor.test(data$Percent_IRF4, data$Percent_TOX)
+print(correlation_result)
+
+# Scatter plot with separate regression lines for each response group
+p <- ggplot(data, aes(x = Percent_IRF4, y = Percent_TOX)) +
+  geom_point(size = 2.5, alpha = 1) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Separate regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Custom colors for response categories
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Different linetypes for each group
+  theme_minimal(base_size = 14) +  # Minimal theme for readability
+  labs(x = "Mean IRF4 Expression", y = "Mean TOX Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  #ggtitle("SCT/IRF4-TOX/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5), legend.position = "none") # Add black border around the plot
+
+p
+
+ggsave("FNA-Correlation-patientID-IRF4-TOX-Response30d-SUPP.eps", p, dpi=600, width = 4, height = 4)
+```
+
+
+# SCT/IRF4-TOX/Response_3m/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_TOX, Percent_IRF4), p.value = cor.test(Percent_TOX, Percent_IRF4)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_TOX, y = Percent_IRF4)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE,size = 1) +
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean TOX Expression", y = "Mean IRF4 Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/TOX-IRF4/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5)) + # Add black border around the plot
+  coord_fixed(ratio = 1)  # Set equal scaling for x and y axes
+p
+ggsave("../Correlation/FNA-IRF4-TOX-Response3m.png", p, dpi=600, width = 6, height = 5.75)
+```
+
+
+
+
+
+
+# SCT/IRF8-NR4A2/Response_30d/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_IRF8, Percent_NR4A2), p.value = cor.test(Percent_IRF8, Percent_NR4A2)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF8, y = Percent_NR4A2)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression", y = "Mean NR4A2 Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/IRF8-NR4A2/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+ggsave("../Correlation/FNA-IRF8-NR4A2-Response30d.png", p, dpi=600, width = 6, height = 5.75)
+```
+
+# SCT/IRF8-NR4A2/Response_3m/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_IRF8, Percent_NR4A2), p.value = cor.test(Percent_IRF8, Percent_NR4A2)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF8, y = Percent_NR4A2)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression", y = "Mean NR4A2 Expression", color = "Response at 3 months", linetype = "Response at 3 months") + 
+  ggtitle("SCT/IRF8-NR4A2/Response_3m/patient")+
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+ggsave("../Correlation/FNA-IRF8-NR4A2-Response3m.png", p, dpi=600, width = 6, height = 5.75)
+```
+
+
+
+
+
+
+
+
+# SCT/IRF8-IRF4/Response_30d/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_IRF4, Percent_IRF8), p.value = cor.test(Percent_IRF4, Percent_IRF8)$p.value)
+
+print(correlations)
+
+correlation_result <- cor.test(data$Percent_IRF4, data$Percent_IRF8)
+print(correlation_result)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF4, y = Percent_IRF8)) +
+  geom_point(size = 3, alpha = 1) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF4 Expression", y = "Mean IRF8 Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  #ggtitle("SCT/IRF4-IRF8/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5), legend.position = "none")  # Add black border around the plot
+p
+ggsave("FNA-Correlation-patientID-IRF4-IRF8-Response30d-SUPP.eps", p, dpi=600, width = 3.75, height = 3.75)
+```
+
+# SCT/IRF8-IRF4/Response_3m/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_IRF8, Percent_IRF4), p.value = cor.test(Percent_IRF8, Percent_IRF4)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF8, y = Percent_IRF4)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) + 
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression", y = "Mean IRF4 Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/IRF8-IRF4/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+ggsave("../Correlation/FNA-IRF4-IRF8-Response3m.png", p, dpi=600, width = 6, height = 5.75)
+```
+
+
+
+
+
+
+
+
+# SCT/IRF4-NR4A2/Response_30d/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_IRF4, Percent_NR4A2), p.value = cor.test(Percent_IRF4, Percent_NR4A2)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_NR4A2, y = Percent_IRF4)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean NR4A2 Expression", y = "Mean IRF4 Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/NR4A2-IRF4/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+ggsave("../Correlation/FNA-IRF4-NR4A2-Response30d.png", p, dpi=600, width = 6, height = 5.75)
+```
+
+# SCT/NR4A2-IRF4/Response_3m/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_NR4A2, Percent_IRF4), p.value = cor.test(Percent_NR4A2, Percent_IRF4)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_NR4A2, y = Percent_IRF4)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean NR4A2 Expression", y = "Mean IRF4 Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/NR4A2-IRF4/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+ggsave("../Correlation/FNA-IRF4-NR4A2-Response3m.png", p, dpi=600, width = 6, height = 5.75)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+# SCT/IRF8-TOX/Response_30d/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_IRF8, Percent_TOX), p.value = cor.test(Percent_IRF8, Percent_TOX)$p.value)
+
+print(correlations)
+
+correlation_result <- cor.test(data$Percent_IRF8, data$Percent_TOX)
+print(correlation_result)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF8, y = Percent_TOX, color = Response_30d, shape =construct)) +
+  geom_point(size = 3, alpha = 1) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  #geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression", y = "Mean TOX Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  #ggtitle("SCT/IRF8-TOX/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5), legend.position = "none")  # Add black border around the plot
+p
+ggsave("FNA-Correlation-patientID-IRF8-TOX-Response30d.eps", p, dpi=600, width = 3.75, height = 3.75)
+```
+
+# SCT/IRF8-TOX/Response_3m/patient
+```{r}
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_IRF8, Percent_TOX), p.value = cor.test(Percent_IRF8, Percent_TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF8, y = Percent_TOX)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression", y = "Mean TOX Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/IRF8-TOX/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+ggsave("../Correlation/FNA-IRF8-TOX-Response3m.png", p, dpi=600, width = 6, height = 5.75)
+```
+
+
+
+
+
+
+
+
+
+# SCT/NR4A2-TOX/Response_30d/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_NR4A2, Percent_TOX), p.value = cor.test(Percent_NR4A2, Percent_TOX)$p.value)
+
+print(correlations)
+
+correlation_result <- cor.test(data$Percent_NR4A2, data$Percent_TOX)
+print(correlation_result)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_NR4A2, y = Percent_TOX)) +
+  geom_point(size = 3, alpha = 1) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) + 
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean NR4A2 Expression", y = "Mean TOX Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  #ggtitle("SCT/NR4A2-TOX/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5), legend.position = "none")  # Add black border around the plot
+p
+ggsave("FNA-Correlation-patientID-TOX-NR4A2-Response30d-SUPP.eps", p, dpi=600, width = 3.75, height = 3.75)
+```
+
+# SCT/NR4A2-TOX/Response_3m/patient
+```{r}
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_NR4A2, Percent_TOX), p.value = cor.test(Percent_NR4A2, Percent_TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_NR4A2, y = Percent_TOX)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean NR4A2 Expression", y = "Mean TOX Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/NR4A2-TOX/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+ggsave("../Correlation/FNA-TOX-NR4A2-Response3m.png", p, dpi=600, width = 6, height = 5.75)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#################################### T CELL LEVEL ####################################
+```{r}
+genes_of_interest <- c("IRF4", "IRF8", "TOX", "NR4A2")
+sct_data <- FetchData(df, vars = genes_of_interest, slot = "data", assay = "SCT")
+merged_data <- cbind(df@meta.data, sct_data)
+merged_data_T <- merged_data %>% filter(interactome_group == "Tconv" | interactome_group2 == "Treg")
+```
+
+```{r}
+data <- merged_data_T %>%
+  group_by(patient_id) %>%
+  summarise(
+    Age = first(Age),
+    Sex = first(Sex),
+    construct = first(construct),
+    Disease_type = first(Disease_type),
+    High_LDH = first(High_LDH),
+    Response_30d = first(Response_30d),  
+    Response_3m = first(Response_3m),    
+    Response_6m = first(Response_6m),   
+    Max_CRS = first(Max_CRS),
+    Max_ICANS = first(Max_ICANS),
+    CMV_Pre_Ab = first(CMV_Pre_Ab),
+    CMV_PCR_First_28 = first(CMV_PCR_First_28),
+    CMV_PCR_D29_to_D180 = first(CMV_PCR_D29_to_D180),
+    Percent_IRF4 = sum(IRF4) / n(),
+    Percent_IRF8 = sum(IRF8) / n(),
+    Percent_TOX = sum(TOX) / n(),
+    Percent_NR4A2 = sum(NR4A2) / n()
+  )
+
+head(data)
+```
+
+
+
+
+
+# SCT/IRF4-TOX/Response_30d/patient
+```{r}
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_IRF4, Percent_TOX), p.value = cor.test(Percent_IRF4, Percent_TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with separate regression lines for each response group
+p <- ggplot(data, aes(x = Percent_IRF4, y = Percent_TOX, color = Response_30d, shape=construct)) +
+  geom_point(size = 2.5, alpha = 1) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Separate regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Custom colors for response categories
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Different linetypes for each group
+  theme_minimal(base_size = 14) +  # Minimal theme for readability
+  labs(x = "Mean IRF4 Expression", y = "Mean TOX Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/IRF4-TOX/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p
+
+ggsave("FNA-Correlation-patientID-IRF4-TOX-Response30d-SUPP.eps", p, dpi=600, width = 6, height = 6)
+```
+
+
+# SCT/IRF4-TOX/Response_3m/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_IRF4, Percent_TOX), p.value = cor.test(Percent_IRF4, Percent_TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF4, y = Percent_TOX, color = Response_3m, shape = construct)) +
+  geom_point(size = 3, alpha = 1) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF4 Expression", y = "Mean TOX Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/TOX-IRF4/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))
+p
+
+ggsave("FNA-Correlation-patientID-IRF4-TOX-Response3m.eps", p, dpi=600, width = 6, height = 6)
+```
+
+
+
+
+
+
+
+
+
+
+
+# SCT/IRF8-NR4A2/Response_30d/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_IRF8, Percent_NR4A2), p.value = cor.test(Percent_IRF8, Percent_NR4A2)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF8, y = Percent_NR4A2, color = Response_30d, shape = construct)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression", y = "Mean NR4A2 Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/IRF8-NR4A2/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+# SCT/IRF8-NR4A2/Response_3m/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_IRF8, Percent_NR4A2), p.value = cor.test(Percent_IRF8, Percent_NR4A2)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF8, y = Percent_NR4A2, color = Response_3m, shape = construct)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression", y = "Mean NR4A2 Expression", color = "Response at 3 months", linetype = "Response at 3 months") + 
+  ggtitle("SCT/IRF8-NR4A2/Response_3m/patient")+
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+
+
+
+
+
+
+
+# SCT/IRF8-IRF4/Response_30d/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_IRF8, Percent_IRF4), p.value = cor.test(Percent_IRF8, Percent_IRF4)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF8, y = Percent_IRF4, color = Response_30d, shape = construct)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression", y = "Mean IRF4 Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/IRF4-IRF8/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+# SCT/IRF8-IRF4/Response_3m/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_IRF8, Percent_IRF4), p.value = cor.test(Percent_IRF8, Percent_IRF4)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF8, y = Percent_IRF4, color = Response_3m, shape = construct)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression", y = "Mean IRF4 Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/IRF8-IRF4/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+
+
+
+
+
+
+
+# SCT/IRF4-NR4A2/Response_30d/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_IRF4, Percent_NR4A2), p.value = cor.test(Percent_IRF4, Percent_NR4A2)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_NR4A2, y = Percent_IRF4, color = Response_30d, shape = construct)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean NR4A2 Expression", y = "Mean IRF4 Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/NR4A2-IRF4/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5)) # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+# SCT/NR4A2-IRF4/Response_3m/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_NR4A2, Percent_IRF4), p.value = cor.test(Percent_NR4A2, Percent_IRF4)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_NR4A2, y = Percent_IRF4, color = Response_3m, shape = construct)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean NR4A2 Expression", y = "Mean IRF4 Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/NR4A2-IRF4/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+# SCT/IRF8-TOX/Response_30d/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_IRF8, Percent_TOX), p.value = cor.test(Percent_IRF8, Percent_TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF8, y = Percent_TOX, color = Response_30d, shape = construct)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression", y = "Mean TOX Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/IRF8-TOX/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+# SCT/IRF8-TOX/Response_3m/patient
+```{r}
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_IRF8, Percent_TOX), p.value = cor.test(Percent_IRF8, Percent_TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_IRF8, y = Percent_TOX, color = Response_3m, shape = construct)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression", y = "Mean TOX Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/IRF8-TOX/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+
+
+
+
+
+
+
+
+# SCT/NR4A2-TOX/Response_30d/patient
+```{r}
+# Calculate correlations for each group
+correlations <- data %>%
+  group_by(Response_30d) %>%
+  summarize(cor = cor(Percent_NR4A2, Percent_TOX), p.value = cor.test(Percent_NR4A2, Percent_TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_NR4A2, y = Percent_TOX, color = Response_30d, shape = construct)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean NR4A2 Expression", y = "Mean TOX Expression", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCT/NR4A2-TOX/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+# SCT/NR4A2-TOX/Response_3m/patient
+```{r}
+correlations <- data %>%
+  group_by(Response_3m) %>%
+  summarize(cor = cor(Percent_NR4A2, Percent_TOX), p.value = cor.test(Percent_NR4A2, Percent_TOX)$p.value)
+
+print(correlations)
+
+# Scatter plot with text annotations for correlations
+p <- ggplot(data, aes(x = Percent_NR4A2, y = Percent_TOX, color = Response_3m, shape = construct)) +
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean NR4A2 Expression", y = "Mean TOX Expression", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCT/NR4A2-TOX/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+p
+#ggsave("FNA-Correlation-Plot-IRF4-TOX-Response3m.eps", p, dpi=600, width = 8, height = 4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+######################################## Boxplot ########################################
+```{r}
+genes_of_interest <- c("IRF4", "IRF8", "TOX", "NR4A2")
+sct_counts <- FetchData(df, vars = genes_of_interest, slot = "counts", assay = "SCT")
+merged_data <- cbind(df@meta.data, sct_counts)
+merged_data_CART <- merged_data %>% filter(interactome_group2 == "CAR+ Tcon" | interactome_group2 == "CAR+ Treg")
+
+merged_data_CART$Response_30d <- factor(merged_data_CART$Response_30d, levels = c("OR", "NR"))
+merged_data_CART$Response_3m <- factor(merged_data_CART$Response_3m, levels = c("DR", "NDR"))
+```
+
+
+
+
+```{r}
+data_30d <- merged_data_CART %>%
+  group_by(patient_id, Response_30d) %>%
+  summarise(construct = first(construct),
+            Response_30d = first(Response_30d),
+            mean_IRF4_expression = mean(IRF4) * 1000,
+            mean_IRF8_expression = mean(IRF8) * 1000,
+            mean_TOX_expression = mean(TOX) * 1000,
+            mean_NR4A2_expression = mean(NR4A2) * 1000) %>%
+  ungroup()
+
+data_3m <- merged_data_CART %>%
+  group_by(patient_id, Response_3m) %>%
+  summarise(construct = first(construct),
+            Response_3m = first(Response_3m),
+            mean_IRF4_expression = mean(IRF4) * 1000,
+            mean_IRF8_expression = mean(IRF8) * 1000,
+            mean_TOX_expression = mean(TOX) * 1000,
+            mean_NR4A2_expression = mean(NR4A2) * 1000) %>%
+  ungroup()
+```
+
+
+
+
+# IRF4-TOX
+```{r}
+cor_test <- cor.test(data_30d$mean_IRF4_expression, data_30d$mean_TOX_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_30d %>%
+  group_by(Response_30d) %>%
+  summarise(correlation_coefficient = cor(mean_IRF4_expression, mean_TOX_expression, method = "pearson"),
+            p_value = cor.test(mean_IRF4_expression, mean_TOX_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("OR" = "blue", "NR" = "red")
+
+p1 <- ggplot(data_30d, aes(x = mean_IRF4_expression, y = mean_TOX_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF4 Expression (counts per 1,000 cells)", y = "Mean TOX Expression (count per 1,000 cells)", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCTcount/IRF4-TOX/Response_30d/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-IRF4-vs-TOX-Response30d.png", dpi=600, width = 6, height=5.75, bg = "white")
+```
+
+
+
+```{r}
+cor_test <- cor.test(data_3m$mean_IRF4_expression, data_3m$mean_TOX_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_3m %>%
+  group_by(Response_3m) %>%
+  summarise(correlation_coefficient = cor(mean_IRF4_expression, mean_TOX_expression, method = "pearson"),
+            p_value = cor.test(mean_IRF4_expression, mean_TOX_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("DR" = "blue", "NDR" = "red")
+
+p1 <- ggplot(data_3m, aes(x = mean_IRF4_expression, y = mean_TOX_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF4 Expression (counts per 1,000 cells)", y = "Mean TOX Expression (count per 1,000 cells)", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCTcount/IRF4-TOX/Response_3m/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-IRF4-vs-TOX-Response3m.png", dpi=600, width = 6, height=5.75, bg = "white")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# IRF4-NR4A2
+```{r}
+cor_test <- cor.test(data_30d$mean_IRF4_expression, data_30d$mean_NR4A2_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_30d %>%
+  group_by(Response_30d) %>%
+  summarise(correlation_coefficient = cor(mean_IRF4_expression, mean_NR4A2_expression, method = "pearson"),
+            p_value = cor.test(mean_IRF4_expression, mean_NR4A2_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("OR" = "blue", "NR" = "red")
+
+p1 <- ggplot(data_30d, aes(x = mean_IRF4_expression, y = mean_NR4A2_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF4 Expression (counts per 1,000 cells)", y = "Mean NR4A2 Expression (count per 1,000 cells)", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCTcount/IRF4-NR4A2/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-IRF4-vs-NR4A2-Response30d.png", dpi=600, width = 6, height=5.75, bg = "white")
+```
+
+
+
+```{r}
+cor_test <- cor.test(data_3m$mean_IRF4_expression, data_3m$mean_NR4A2_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_3m %>%
+  group_by(Response_3m) %>%
+  summarise(correlation_coefficient = cor(mean_IRF4_expression, mean_NR4A2_expression, method = "pearson"),
+            p_value = cor.test(mean_IRF4_expression, mean_NR4A2_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("DR" = "blue", "NDR" = "red")
+
+p1 <- ggplot(data_3m, aes(x = mean_IRF4_expression, y = mean_NR4A2_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF4 Expression (counts per 1,000 cells)", y = "Mean NR4A2 Expression (count per 1,000 cells)", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCTcount/IRF4-NR4A2/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-IRF4-vs-NR4A2-Response3m.png", dpi=600, width = 6, height=5.75, bg = "white")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# IRF4-IRF8
+```{r}
+cor_test <- cor.test(data_30d$mean_IRF4_expression, data_30d$mean_IRF8_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_30d %>%
+  group_by(Response_30d) %>%
+  summarise(correlation_coefficient = cor(mean_IRF4_expression, mean_IRF8_expression, method = "pearson"),
+            p_value = cor.test(mean_IRF4_expression, mean_IRF8_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("OR" = "blue", "NR" = "red")
+
+p1 <- ggplot(data_30d, aes(x = mean_IRF4_expression, y = mean_IRF8_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF4 Expression (counts per 1,000 cells)", y = "Mean IRF8 Expression (count per 1,000 cells)", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCTcount/IRF4-IRF8/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-IRF4-vs-IRF8-Response30d.png", dpi=600, width = 6, height=5.75, bg = "white")
+```
+
+
+
+```{r}
+cor_test <- cor.test(data_3m$mean_IRF4_expression, data_3m$mean_IRF8_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_3m %>%
+  group_by(Response_3m) %>%
+  summarise(correlation_coefficient = cor(mean_IRF4_expression, mean_IRF8_expression, method = "pearson"),
+            p_value = cor.test(mean_IRF4_expression, mean_IRF8_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("DR" = "blue", "NDR" = "red")
+
+p1 <- ggplot(data_3m, aes(x = mean_IRF4_expression, y = mean_IRF8_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF4 Expression (counts per 1,000 cells)", y = "Mean IRF8 Expression (count per 1,000 cells)", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCTcount/IRF4-IRF8/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-IRF4-vs-IRF8-Response3m.png", dpi=600, width = 6, height=5.75, bg = "white")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# IRF8-TOX
+```{r}
+cor_test <- cor.test(data_30d$mean_IRF8_expression, data_30d$mean_TOX_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_30d %>%
+  group_by(Response_30d) %>%
+  summarise(correlation_coefficient = cor(mean_IRF8_expression, mean_TOX_expression, method = "pearson"),
+            p_value = cor.test(mean_IRF8_expression, mean_TOX_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("OR" = "blue", "NR" = "red")
+
+p1 <- ggplot(data_30d, aes(x = mean_IRF8_expression, y = mean_TOX_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression (counts per 1,000 cells)", y = "Mean TOX Expression (count per 1,000 cells)", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCTcount/IRF8-TOX/Response_30d/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-IRF8-vs-TOX-Response30d.png", dpi=600, width = 6, height=5.75, bg = "white")
+```
+
+
+
+```{r}
+cor_test <- cor.test(data_3m$mean_IRF8_expression, data_3m$mean_TOX_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_3m %>%
+  group_by(Response_3m) %>%
+  summarise(correlation_coefficient = cor(mean_IRF8_expression, mean_TOX_expression, method = "pearson"),
+            p_value = cor.test(mean_IRF8_expression, mean_TOX_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("DR" = "blue", "NDR" = "red")
+
+p1 <- ggplot(data_3m, aes(x = mean_IRF8_expression, y = mean_TOX_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression (counts per 1,000 cells)", y = "Mean TOX Expression (count per 1,000 cells)", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCTcount/IRF8-TOX/Response_3m/cell") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-IRF8-vs-TOX-Response3m.png", dpi=600, width = 6, height=5.75, bg = "white")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# IRF8-NR4A2
+```{r}
+cor_test <- cor.test(data_30d$mean_IRF8_expression, data_30d$mean_NR4A2_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_30d %>%
+  group_by(Response_30d) %>%
+  summarise(correlation_coefficient = cor(mean_IRF8_expression, mean_NR4A2_expression, method = "pearson"),
+            p_value = cor.test(mean_IRF8_expression, mean_NR4A2_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("OR" = "blue", "NR" = "red")
+
+p1 <- ggplot(data_30d, aes(x = mean_IRF8_expression, y = mean_NR4A2_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression (counts per 1,000 cells)", y = "Mean NR4A2 Expression (count per 1,000 cells)", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCTcount/IRF8-NR4A2/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-IRF8-vs-NR4A2-Response30d.png", dpi=600, width = 6, height=5.75, bg = "white")
+```
+
+
+
+```{r}
+cor_test <- cor.test(data_3m$mean_IRF8_expression, data_3m$mean_NR4A2_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_3m %>%
+  group_by(Response_3m) %>%
+  summarise(correlation_coefficient = cor(mean_IRF8_expression, mean_NR4A2_expression, method = "pearson"),
+            p_value = cor.test(mean_IRF8_expression, mean_NR4A2_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("DR" = "blue", "NDR" = "red")
+
+p1 <- ggplot(data_3m, aes(x = mean_IRF8_expression, y = mean_NR4A2_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean IRF8 Expression (counts per 1,000 cells)", y = "Mean NR4A2 Expression (count per 1,000 cells)", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCTcount/IRF8-NR4A2/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-IRF8-vs-NR4A2-Response3m.png", dpi=600, width = 6, height=5.75, bg = "white")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# TOX-NR4A2
+```{r}
+cor_test <- cor.test(data_30d$mean_TOX_expression, data_30d$mean_NR4A2_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_30d %>%
+  group_by(Response_30d) %>%
+  summarise(correlation_coefficient = cor(mean_TOX_expression, mean_NR4A2_expression, method = "pearson"),
+            p_value = cor.test(mean_TOX_expression, mean_NR4A2_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("OR" = "blue", "NR" = "red")
+
+p1 <- ggplot(data_30d, aes(x = mean_TOX_expression, y = mean_NR4A2_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_30d), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("OR" = "#0000fc", "NR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("OR" = "solid", "NR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean TOX Expression (counts per 1,000 cells)", y = "Mean NR4A2 Expression (count per 1,000 cells)", color = "Response at 30 days", linetype = "Response at 30 days") +  # Labels
+  ggtitle("SCTcount/TOX-NR4A2/Response_30d/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-TOX-vs-NR4A2-Response30d.png", dpi=600, width = 6, height=5.75, bg = "white")
+```
+
+
+
+```{r}
+cor_test <- cor.test(data_3m$mean_TOX_expression, data_3m$mean_NR4A2_expression)
+correlation_coefficient <- cor_test$estimate
+p_value <- cor_test$p.value
+print(correlation_coefficient)
+print(p_value)
+
+cor_by_response <- data_3m %>%
+  group_by(Response_3m) %>%
+  summarise(correlation_coefficient = cor(mean_TOX_expression, mean_NR4A2_expression, method = "pearson"),
+            p_value = cor.test(mean_TOX_expression, mean_NR4A2_expression)$p.value)
+print(cor_by_response)
+
+colors <- c("DR" = "blue", "NDR" = "red")
+
+p1 <- ggplot(data_3m, aes(x = mean_TOX_expression, y = mean_NR4A2_expression)) +  
+  geom_point(size = 3, alpha = 0.8) +  # Points with transparency
+  #geom_smooth(method = "lm", se = FALSE, aes(linetype = Response_3m), size = 1) +  # Regression lines
+  geom_smooth(method = "lm", se = FALSE, size = 1) +
+  scale_color_manual(values = c("DR" = "#0000fc", "NDR" = "#fc0001")) +  # Colors
+  scale_shape_manual(values = c("Axi-cel" = 16, "Bispecific CD19/22" = 17)) +
+  #scale_linetype_manual(values = c("DR" = "solid", "NDR" = "dashed")) +  # Linetypes
+  theme_minimal(base_size = 14) +  # Clean theme
+  labs(x = "Mean TOX Expression (counts per 1,000 cells)", y = "Mean NR4A2 Expression (count per 1,000 cells)", color = "Response at 3 months", linetype = "Response at 3 months") +  # Labels
+  ggtitle("SCTcount/TOX-NR4A2/Response_3m/patient") +
+  theme(panel.border = element_rect(color = "black", fill = NA, size = 0.5))  # Add black border around the plot
+
+p1
+
+ggsave("../Correlation/FNA-TOX-vs-NR4A2-Response3m.png", dpi=600, width = 6, height=5.75, bg = "white")
+```

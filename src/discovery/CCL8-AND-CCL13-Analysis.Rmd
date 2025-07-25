@@ -1,0 +1,1957 @@
+---
+title: "CCL8-AND-CCL13-Trajectory"
+author: "Kelvin Mo"
+date: "2024-05-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+gc()
+library(Seurat)
+library(dplyr)
+library(ggplot2)
+library(rsample)
+library(glmnet)
+
+```
+
+```{r}
+df <- readRDS("../FNA/FNA_InteractomeAnalysis_2.rds")
+df$Response_3m[df$Response_3m == "PR"] <- "CR"
+df$Response_3m[df$Response_3m == "SD"] <- "PD"
+```
+
+```{r}
+# Filter cells that express both CCL8 and CCL13
+CCL8_CCL13_positive_cells <- WhichCells(df, expression = CCL8 > 0 & CCL13 > 0)
+
+CCL8_CCL13_positive_cells <- colnames(df)[df@assays$RNA@counts["CCL8", ] > 0 & df@assays$RNA@counts["CCL13", ] > 0]
+
+myeloid_cells_by_annotation <- colnames(df)[df@meta.data$interactome_group == "Myeloid DC"]
+
+
+# ======================================================================================
+  
+  
+#myeloid_markers <- c("CD14", "LYZ", "CD68")  # Example myeloid markers
+myeloid_cells_by_marker <- WhichCells(df, expression = CD14 > 0 & LYZ > 0 & CD68 > 0)
+
+#dendritic_cell_markers <- c("CD123", "CD103", "CD11c", "CD2AP")
+dendritic_cells_by_markers <- WhichCells(df, expression = CD2AP > 0 & CD83 > 0)
+
+# CLEC10A > 0 | MS4A4A > 0 | MS4A6A > 0 | TGFBI > 0 | CD180 > 0 | CD36 > 0 | CD93 > 0 | ARG1 > 0 
+M2_macrophages_by_marker <- WhichCells(df, expression = CD163 > 0)
+
+#mast_cell_markers <- c("CD9", "CD33", "CD203c", "CD117")
+mast_cells_by_markers <- WhichCells(df, expression = CD9 > 0 & CD33 > 0)
+
+# ======================================================================================
+
+# Find common cells between the two
+CCL8_CCL13_myeloid_cells <- intersect(CCL8_CCL13_positive_cells, myeloid_cells_by_annotation)
+
+# Subset Seurat object
+seurat_myeloid_CCL8_CCL13 <- subset(df, cells = CCL8_CCL13_myeloid_cells)
+
+
+```
+
+```{r}
+DimPlot(seurat_myeloid_CCL8_CCL13, reduction = "wnn.umap", label = TRUE)
+FeaturePlot(seurat_myeloid_CCL8_CCL13, features = c("CCL8", "CCL13", "CD14", "CD163"))
+```
+
+# CCL8+CCL13+ myeloid/DCs | Annonated Myeloid DCs
+```{r}
+a <- DimPlot(df, reduction = "wnn.umap", cells.highlight = CCL8_CCL13_positive_cells, cols.highlight = "red", sizes.highlight = 1)
+b <- DimPlot(df, reduction = "wnn.umap", cells.highlight = myeloid_cells_by_annotation, cols.highlight = "red", sizes.highlight = 1)
+a | b
+```
+
+
+# CCL8+CCL13+ myeloid/DCs | CD163+ cells
+```{r}
+a <- DimPlot(df, reduction = "wnn.umap", cells.highlight = CCL8_CCL13_myeloid_cells, cols.highlight = "red", sizes.highlight = 1)
+b <- DimPlot(df, reduction = "wnn.umap", cells.highlight = M2_macrophages_by_marker, cols.highlight = "red", sizes.highlight = 1)
+a | b
+```
+
+# CCL8+CCL13+ myeloid/DCs | Myeloid cells (CD14+LYZ+CD68+)
+```{r}
+c <- DimPlot(df, reduction = "wnn.umap", cells.highlight = CCL8_CCL13_myeloid_cells, cols.highlight = "red", sizes.highlight = 1)
+d <- DimPlot(df, reduction = "wnn.umap", cells.highlight = myeloid_cells_by_marker, cols.highlight = "red", sizes.highlight = 1)
+c | d
+```
+
+
+# CCL8+CCL13+ myeloid/DCs | Dendritic cells (CD2AP+CD83+)
+```{r}
+e <- DimPlot(df, reduction = "wnn.umap", cells.highlight = CCL8_CCL13_myeloid_cells, cols.highlight = "red", sizes.highlight = 1)
+f <- DimPlot(df, reduction = "wnn.umap", cells.highlight = dendritic_cells_by_markers, cols.highlight = "red", sizes.highlight = 1)
+e | f
+```
+
+
+# CCL8+CCL13+ myeloid/DCs | Mast cells (CD9+CD33+)
+```{r}
+g <- DimPlot(df, reduction = "wnn.umap", cells.highlight = CCL8_CCL13_myeloid_cells, cols.highlight = "red", sizes.highlight = 1)
+h <- DimPlot(df, reduction = "wnn.umap", cells.highlight = mast_cells_by_markers, cols.highlight = "red", sizes.highlight = 1)
+g | h
+
+```
+
+# wnnUMAPs of a few markers MDCs
+```{r}
+MDC <- subset(df, subset = interactome_group == "Myeloid DC")
+
+# 1-3 for M2 macrophage, 4 for myeloid DCs, 5 for MDSCs, 6 eosinophil
+# ITGAX = CD11c
+# MRC1 = CD206
+markers <- c("CD163", "MRC1", "CD209", "ITGAX", "CD33", "CD69") # + "CD180" (M2 macrophage) + "CD83" (DCs)
+
+FeaturePlot(MDC, feature = "CD83", order = TRUE, reduction = "wnn.umap", cols = c("lightgrey", "dark red"), min.cutoff = 0, max.cutoff = NA) + WhiteBackground()
+ggsave(filename = paste0("../MyeloidDC-CD83-wnnUMAP.eps"), width = 4.6, height = 4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# Identify CCL8+CCL13+ cells
+ccl8_ccl13_positive <- WhichCells(df, expression = CCL8 > 0)
+
+clinical_responses <- df$Response_3m[ccl8_ccl13_positive]
+
+# Create a data frame summarizing the proportion of these cells by clinical outcome
+cell_counts <- table(Idents(df)[ccl8_ccl13_positive], clinical_responses)
+proportions <- prop.table(cell_counts, 1)  # Normalize by sample
+
+proportions
+
+clinical_data <- data.frame(proportion_CCL8_CCL13 = proportions[, "CCL8+CCL13+"], outcome = as.factor(clinical_outcomes))
+
+```
+
+```{r}
+library(Seurat)
+library(dplyr)
+library(caret)
+library(randomForest)
+library(e1071)  # For SVM
+library(xgboost)  # For gradient boosting
+```
+
+# Raw CCL8 expression of Each Patient -> Clinical Response of Patients
+```{r}
+df$Response_3m[df$Response_3m == "PR"] <- "CR"
+df$Response_3m[df$Response_3m == "SD"] <- "PD"
+
+df <- AddMetaData(df, metadata = ifelse(FetchData(df, "CCL8") > 0, 1, 0), col.name = "CCL8_status")
+
+patient_data <- df@meta.data %>%
+  group_by(patient_id) %>%
+  summarize(
+    CCL8_Expression = mean(CCL8_status, na.rm = TRUE),  # Proportion of cells expressing CCL8
+    Response = first(Response_3m)  # Assuming 'Response' field exists and is CR or PD
+  )
+
+patient_data$Response <- ifelse(patient_data$Response == "CR", 0, 1)
+patient_data
+```
+
+
+# Logistic Regression
+```{r}
+# Logistic regression model
+set.seed(123)  # for reproducibility
+log_model <- glm(Response ~ CCL8_Expression, data = patient_data, family = binomial())
+
+# Summary of the model
+summary(log_model)
+```
+
+# Random Forest
+```{r}
+# Random forest model
+set.seed(123)
+rf_model <- randomForest(Response ~ CCL8_Expression, data = patient_data, ntree = 500)
+
+# Print the model summary
+print(rf_model)
+```
+
+# SVM
+```{r}
+# SVM model
+set.seed(123)
+svm_model <- svm(Response ~ CCL8_Expression, data = patient_data, kernel = "linear", probability = TRUE)
+
+# Summary of the SVM model
+summary(svm_model)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Raw CCL8 expression of Single Cell -> Clinical Response of Patients
+```{r}
+df <- AddMetaData(df, metadata = FetchData(df, "CCL8"), col.name = "CCL8_expr")
+
+cell_data <- df@meta.data[,c("Response_3m", "CCL8_expr", "interactome_group")]
+cell_data <- subset(cell_data, subset = interactome_group == "Myeloid DC")
+
+head(cell_data)
+```
+
+```{r}
+# Convert 'Response_3m' to a factor if it isn't already
+cell_data$Response_3m <- as.factor(cell_data$Response_3m)
+cell_data$Response_3m <- ifelse(cell_data$Response_3m == "CR", 0, 1)
+
+# Load the necessary package
+library(stats)
+
+# Fit the logistic regression model
+model <- glm(Response_3m ~ CCL8_expr, family = binomial(link = "logit"), data = cell_data)
+
+# Summary of the model to see results
+summary(model)
+
+
+```
+
+```{r}
+
+# Fit the random forest model
+set.seed(123)  # for reproducibility
+rf_model <- randomForest(Response_3m ~ CCL8_expr, data = cell_data, ntree = 500, importance = TRUE)
+
+# Print the model summary
+print(rf_model)
+
+# View the importance of the predictors
+importance(rf_model)
+```
+
+```{r}
+install.packages("glmnet", dependencies = TRUE)
+library(glmnet)
+
+predictors <- model.matrix(Response_3m ~ CCL8_expr, data = cell_data) 
+response <- cell_data$Response_3m
+
+# Fit the Lasso model using cross-validation
+set.seed(123)  # For reproducibility
+cv_model <- cv.glmnet(predictors, response, family = "binomial")
+
+# Plot the cross-validation result to see the lambda with minimal error
+plot(cv_model)
+
+```
+
+
+```{r}
+# Extract the best lambda and coefficients
+best_lambda <- cv_model$lambda.min
+best_model <- glmnet(predictors, response, family = "binomial", lambda = best_lambda)
+
+# View coefficients
+coef(best_model)
+
+print(best_model)
+
+```
+
+```{r}
+# Predict on the training set (or a separate test set if you have one)
+predicted_probabilities <- predict(best_model, newx = predictors, type = "response")
+
+# Convert probabilities to binary outcome based on a 0.5 threshold
+predicted_classes <- ifelse(predicted_probabilities > 0.5, "CR", "PD")
+
+# Evaluate model performance using a confusion matrix
+table(Predicted = predicted_classes, Actual = cell_data$Response_3m)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Raw CCL8 AND CCL13 expression of Single Cell -> Clinical Response of Patients
+```{r}
+df <- AddMetaData(df, metadata = FetchData(df, "CCL8"), col.name = "CCL8_expr")
+df <- AddMetaData(df, metadata = FetchData(df, "CCL13"), col.name = "CCL13_expr")
+
+cell_data <- df@meta.data[,c("Response_3m", "CCL8_expr", "CCL13_expr", "interactome_group")]
+cell_data <- subset(cell_data, subset = interactome_group == "Myeloid DC")
+cell_data$Response_3m <- ifelse(cell_data$Response_3m == "CR", 0, 1)
+  
+
+table(cell_data$Response_3m)
+```
+
+```{r}
+X <- as.matrix(cell_data[, c("CCL8_expr", "CCL13_expr")])
+y <- as.numeric(cell_data$Response_3m)
+
+# Perform lasso cross-validation
+cv_fit <- cv.glmnet(X, y, alpha=1)
+
+# Extract best lambda value
+best_lambda <- cv_fit$lambda.min
+
+lasso_model <- glmnet(X, y, alpha = 1, lambda = best_lambda)
+
+summary(lasso_model)
+
+predictions <- predict(lasso_model, s = 0.01, newx = X) 
+
+  # Convert predictions to ordinal values
+  predicted_outcomes <- factor(ifelse(predictions < 0.5, 0, 1), levels = c(0, 1))
+  
+  # Calculate performance metrics
+  accuracy <- mean(as.character(predicted_outcomes) == as.character(cell_data$Response_3m))
+  confusion_matrix <- table(predicted_outcomes, cell_data$Response_3m)
+  confusion_matrix
+```
+
+
+```{r}
+# Convert 'Response_3m' to a factor if it isn't already
+cell_data$Response_3m <- as.factor(cell_data$Response_3m)
+
+
+# Load the necessary package
+library(stats)
+
+# Fit the logistic regression model
+model <- glm(Response_3m ~ CCL8_expr + CCL13_expr, family = binomial(link = "logit"), data = cell_data)
+
+# Summary of the model to see results
+summary(model)
+
+
+```
+
+```{r}
+
+# Fit the random forest model
+set.seed(123)  # for reproducibility
+rf_model <- randomForest(Response_3m ~ CCL8_expr + CCL13_expr, data = cell_data, ntree = 500, importance = TRUE)
+
+# Print the model summary
+print(rf_model)
+
+# View the importance of the predictors
+importance(rf_model)
+
+```
+
+```{r}
+install.packages("glmnet", dependencies = TRUE)
+library(glmnet)
+
+predictors <- model.matrix(Response_3m ~ CCL8_expr + CCL13_expr, data = cell_data) 
+response <- cell_data$Response_3m
+
+# Fit the Lasso model using cross-validation
+set.seed(123)  # For reproducibility
+cv_model <- cv.glmnet(predictors, response, family = "binomial")
+
+# Plot the cross-validation result to see the lambda with minimal error
+plot(cv_model)
+
+```
+
+
+```{r}
+# Extract the best lambda and coefficients
+best_lambda <- cv_model$lambda.min
+best_model <- glmnet(predictors, response, family = "binomial", lambda = best_lambda)
+
+# View coefficients
+coef(best_model)
+
+print(best_model)
+
+```
+
+```{r}
+# Predict on the training set (or a separate test set if you have one)
+predicted_probabilities <- predict(best_model, newx = predictors, type = "response")
+
+# Convert probabilities to binary outcome based on a 0.5 threshold
+predicted_classes <- ifelse(predicted_probabilities > 0.5, "CR", "PD")
+
+# Evaluate model performance using a confusion matrix
+table(Predicted = predicted_classes, Actual = cell_data$Response_3m)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# BEST ONE YET
+
+# Raw CCL8 AND CCL13 AND LDH expression of Single Cell -> Clinical Response of Patients
+```{r}
+df <- AddMetaData(df, metadata = FetchData(df, "CCL8"), col.name = "CCL8_expr")
+df <- AddMetaData(df, metadata = FetchData(df, "CCL13"), col.name = "CCL13_expr")
+#df <- AddMetaData(df, metadata = FetchData(df, "CCL18"), col.name = "CCL18_expr")
+
+cell_data <- df@meta.data[,c("Response_3m", "CCL8_expr", "CCL13_expr", "High_LDH", "interactome_group")]
+cell_data <- subset(cell_data, subset = interactome_group == "Myeloid DC")
+
+head(cell_data, 200)
+```
+
+```{r}
+set.seed(123)
+# Convert 'Response_3m' to a factor if it isn't already
+cell_data$Response_3m <- as.factor(cell_data$Response_3m)
+cell_data$Response_3m[cell_data$Response_3m == "PR"] <- "CR"
+
+# Load the necessary package
+library(stats)
+
+# Fit the logistic regression model
+model <- glm(Response_3m ~ CCL8_expr + CCL13_expr + High_LDH, family = binomial(link = "logit"), data = cell_data)
+
+# Summary of the model to see results
+summary(model)
+
+
+```
+
+```{r}
+
+# Fit the random forest model
+set.seed(123)  # for reproducibility
+rf_model <- randomForest(Response_3m ~ CCL8_expr + CCL13_expr + High_LDH, data = cell_data, ntree = 500, importance = TRUE)
+
+# Print the model summary
+print(rf_model)
+
+# View the importance of the predictors
+importance(rf_model)
+```
+
+```{r}
+#install.packages("glmnet", dependencies = TRUE)
+library(glmnet)
+
+predictors <- model.matrix(Response_3m ~ CCL8_expr + CCL13_expr + High_LDH, data = cell_data) 
+response <- cell_data$Response_3m
+
+# Fit the Lasso model using cross-validation
+set.seed(123)  # For reproducibility
+cv_model <- cv.glmnet(predictors, response, family = "multinomial") #binomial
+
+# Plot the cross-validation result to see the lambda with minimal error
+plot(cv_model)
+
+```
+
+
+```{r}
+# Extract the best lambda and coefficients
+best_lambda <- cv_model$lambda.min
+best_model <- glmnet(predictors, response, family = "multinomial", lambda = best_lambda)
+
+# View coefficients
+coef(best_model)
+
+print(best_model)
+
+```
+
+```{r}
+# Predict on the training set (or a separate test set if you have one)
+predicted_probabilities <- predict(best_model, newx = predictors, type = "response")
+
+# Convert probabilities to binary outcome based on a 0.5 threshold
+predicted_classes <- ifelse(predicted_probabilities > 0.5, "CR", "PD")
+
+# Evaluate model performance using a confusion matrix
+table(Predicted = predicted_classes, Actual = cell_data$Response_3m)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Raw CCL8 AND CCL13 AND CCL18 AND HIGH_LDH expression of Single Cell -> Clinical Response of Patients
+```{r}
+df <- AddMetaData(df, metadata = FetchData(df, "CCL8"), col.name = "CCL8_expr")
+df <- AddMetaData(df, metadata = FetchData(df, "CCL13"), col.name = "CCL13_expr")
+df <- AddMetaData(df, metadata = FetchData(df, "CCL18"), col.name = "CCL18_expr")
+
+cell_data <- df@meta.data[,c("Response_3m", "CCL8_expr", "CCL13_expr", "CCL18_expr", "High_LDH", "interactome_group")]
+cell_data <- subset(cell_data, subset = interactome_group == "Myeloid DC")
+
+cell_data$Response_3m <- ifelse(cell_data$Response_3m == "CR", 0, 1)
+
+head(cell_data, 200)
+```
+
+```{r}
+set.seed(123)
+# Convert 'Response_3m' to a factor if it isn't already
+cell_data$Response_3m <- as.factor(cell_data$Response_3m)
+
+# Load the necessary package
+library(stats)
+
+# Fit the logistic regression model
+model <- glm(Response_3m ~ CCL8_expr + CCL13_expr + CCL18_expr + High_LDH, family = binomial(link = "logit"), data = cell_data)
+
+# Summary of the model to see results
+summary(model)
+
+
+```
+
+```{r}
+
+# Fit the random forest model
+set.seed(123)  # for reproducibility
+rf_model <- randomForest(Response_3m ~ CCL8_expr + CCL13_expr + CCL18_expr + High_LDH, data = cell_data, ntree = 500, importance = TRUE)
+
+# Print the model summary
+print(rf_model)
+
+# View the importance of the predictors
+importance(rf_model)
+```
+
+```{r}
+install.packages("glmnet", dependencies = TRUE)
+library(glmnet)
+
+predictors <- model.matrix(Response_3m ~ CCL8_expr + CCL13_expr + CCL18_expr + High_LDH, data = cell_data) 
+response <- cell_data$Response_3m
+
+# Fit the Lasso model using cross-validation
+set.seed(123)  # For reproducibility
+cv_model <- cv.glmnet(predictors, response, family = "binomial")
+
+# Plot the cross-validation result to see the lambda with minimal error
+plot(cv_model)
+
+```
+
+
+```{r}
+# Extract the best lambda and coefficients
+best_lambda <- cv_model$lambda.min
+best_model <- glmnet(predictors, response, family = "binomial", lambda = best_lambda)
+
+# View coefficients
+coef(best_model)
+
+print(best_model)
+
+```
+
+```{r}
+# Predict on the training set (or a separate test set if you have one)
+predicted_probabilities <- predict(best_model, newx = predictors, type = "response")
+
+# Convert probabilities to binary outcome based on a 0.5 threshold
+predicted_classes <- ifelse(predicted_probabilities > 0.5, "CR", "PD")
+
+# Evaluate model performance using a confusion matrix
+table(Predicted = predicted_classes, Actual = cell_data$Response_3m)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+### Perform lasso multivariate regression
+```{r}
+df <- AddMetaData(df, metadata = FetchData(df, "CCL8"), col.name = "CCL8_expr")
+df <- AddMetaData(df, metadata = FetchData(df, "CCL13"), col.name = "CCL13_expr")
+
+cell_data <- df@meta.data[,c("Response_3m", "CCL8_expr", "CCL13_expr", "interactome_group")]
+cell_data <- subset(cell_data, subset = interactome_group == "Myeloid DC")
+
+cell_data$Response_3m[cell_data$Response_3m == "PR"] <- "CR"
+
+cell_data$Response_3m <- factor(cell_data$Response_3m, levels = c("CR", "PD"), labels = c(0, 1))
+
+head(cell_data, 200)
+unique(cell_data$Response_3m)
+
+```
+
+```{r}
+normalize <- function(data) {
+  num_cols <- ncol(data)
+  scaled_data <- scale(data, center = sapply(1:num_cols, function(col) min(data[,col])), 
+                       scale = sapply(1:num_cols, function(col) max(data[,col]) - min(data[,col])))
+  return(scaled_data)
+}
+```
+
+```{r}
+X <- as.matrix(cell_data[, c("CCL8_expr", "CCL13_expr")])
+y <- as.numeric(cell_data$Response_3m)
+
+# Perform lasso cross-validation
+cv_fit <- cv.glmnet(X, y, alpha=1)
+
+# Extract best lambda value
+best_lambda <- cv_fit$lambda.min
+
+# Plot the lambda values
+print(best_lambda)
+plot(cv_fit)
+
+```
+
+
+```{r}
+set.seed(123) # Set a seed for reproducibility
+cv_folds <- vfold_cv(cell_data, v = 10, strata = "Response_3m") # Create 10-fold CV object
+# Initialize an empty vector to store results
+model_performance <- vector("list", length = 10)
+
+# Loop through the folds
+for(i in 1:10) {
+  # Get the training and testing data for current fold
+  df_train <- training(cv_folds$splits[[i]])
+  df_test <- testing(cv_folds$splits[[i]])
+  
+  # Prepare the predictors and response with normalization
+  X_train <- as.matrix(df_train[, -1])
+  y_train <- as.numeric(df_train$Response_3m)
+  
+  # Prepare test data for prediction with normalization
+  X_test <- as.matrix(df_test[, -1])
+  y_test <- as.numeric(df_test$Response_3m)
+  
+  # Perform lasso regression
+  lasso_model <- glmnet(X_train, y_train, alpha = 1,lambda = best_lambda) # alpha=1 for lasso
+  
+  # Predict the outcomes on the test data
+  predictions <- predict(lasso_model, s = 0.01, newx = X_test) 
+
+  # Convert predictions to ordinal values
+  predicted_outcomes <- factor(ifelse(predictions < 0.75, 0, 1), levels = c(0, 1))
+  
+  # Calculate performance metrics
+  accuracy <- mean(as.character(predicted_outcomes) == as.character(df_test$Response_3m))
+  confusion_matrix <- table(predicted_outcomes, df_test$Response_3m)
+  
+  #Store results
+  model_performance[[i]] <- list(accuracy = accuracy, confusion_matrix = confusion_matrix)
+}
+
+
+```
+
+```{r}
+print(model_performance)
+```
+
+```{r}
+mean_accuracy <- mean(sapply(model_performance, function(x) x$accuracy))
+overall_confusion_matrix <- Reduce("+", lapply(model_performance, function(x) x$confusion_matrix))
+print(mean_accuracy)
+print(overall_confusion_matrix)
+```
+
+```{r}
+# Create confusion matrix
+conf_matrix <- matrix(c(19, 4, 3, 1,
+                       10, 6, 2, 5,
+                       3, 1, 1, 0,
+                       2, 0, 0, 0), nrow = 4)
+
+rownames(conf_matrix) <- c("CR", "PR", "SD", "PD")
+colnames(conf_matrix) <- c("CR", "PR", "SD", "PD")
+
+# Convert matrix to long format for ggplot
+conf_matrix_melted <- melt(conf_matrix)
+
+# Create plot
+ggplot(data = conf_matrix_melted, aes(x = Var1, y = Var2)) +
+  geom_tile(aes(fill = value), color = "white") +
+  geom_text(aes(label = sprintf("%d", value)), vjust = 1) +
+  scale_fill_gradient(low = "white", high = "#8C1515") +
+  theme_minimal() +
+  labs(x = "Predicted", y = "Actual", fill = "Frequency") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Final
+```{r}
+df <- AddMetaData(df, metadata = FetchData(df, "CCL8"), col.name = "CCL8_expr")
+df <- AddMetaData(df, metadata = FetchData(df, "CCL13"), col.name = "CCL13_expr")
+df <- AddMetaData(df, metadata = FetchData(df, "CCL18"), col.name = "CCL18_expr")
+
+cell_data <- df@meta.data[,c("Response_3m", "CCL8_expr", "CCL13_expr", "CCL18_expr","High_LDH", "interactome_group")]
+cell_data <- subset(cell_data, subset = interactome_group == "Myeloid DC")
+
+head(cell_data, 200)
+```
+
+```{r}
+# Convert 'Response_3m' to a factor if it isn't already
+cell_data$Response_3m <- factor(cell_data$Response_3m, levels = c("CR", "PD"), labels = c(0, 1))
+cell_data$High_LDH <- factor(cell_data$High_LDH, levels = c(TRUE, FALSE), labels = c(1, 0))
+
+cell_data$CCL8_expr <- ifelse(cell_data$CCL8_expr > 0, 1, 0)
+cell_data$CCL13_expr <- ifelse(cell_data$CCL13_expr > 0, 1, 0)
+cell_data$CCL18_expr <- ifelse(cell_data$CCL18_expr > 0, 1, 0)
+
+head(cell_data)
+```
+
+
+```{r}
+# Load required library
+library(glmnet)
+
+# Prepare the data
+# Selecting predictor variables and the response variable
+x <- as.matrix(cell_data[, c("CCL8_expr", "CCL13_expr", "High_LDH")])  # Predictor variables
+y <- cell_data$Response_3m  # Response variable
+
+# Fit the Lasso model
+set.seed(123)  # For reproducibility
+cv_model <- cv.glmnet(x, y, family = "binomial", alpha = 1)  # 'alpha = 1' indicates Lasso
+
+# Plot the cross-validated error
+plot(cv_model)
+
+# Find the best lambda (regularization parameter)
+best_lambda <- cv_model$lambda.min
+
+# Fit the model using the best lambda
+lasso_model <- glmnet(x, y, family = "binomial", alpha = 1, lambda = best_lambda)
+
+# Display the coefficients
+print(coef(lasso_model))
+
+# Making predictions (probabilities of the clinical response being 1)
+predictions <- predict(lasso_model, s = best_lambda, newx = as.matrix(cell_data[, c("CCL8_expr", "CCL13_expr", "High_LDH")]), type = "response")
+
+```
+
+```{r}
+library(randomForest)
+rf_model <- randomForest(Response_3m ~ CCL8_expr + CCL13_expr + High_LDH, data = cell_data, ntree = 500)
+importance(rf_model)
+```
+
+```{r}
+library(e1071)
+svm_model <- svm(Response_3m ~ CCL8_expr + CCL13_expr + High_LDH, data = cell_data, type = "C-classification", kernel = "linear")
+coef(svm_model)
+```
+
+
+```{r}
+library(glmnet)
+X <- as.matrix(cell_data[, c("CCL8_expr", "CCL13_expr", "High_LDH")])
+y <- as.factor(cell_data$Response_3m)
+cv_fit <- cv.glmnet(X, y, family = "binomial", alpha = 1) # Lasso penalty
+coef(cv_fit, s = "lambda.min")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Redo wnnUMAP for CCL8+CCL13+ Myeloid/DCs
+```{r}
+library(knitr)
+BiocManager::install("maptools")
+library(maptools)
+library(e1071)  # This library includes SVM functionality
+
+```
+
+```{r}
+myeloid_dcs <- subset(df, subset = interactome_group == "Myeloid DC")
+
+myeloid_dcs@meta.data$CCL8_CCL13_status <- ifelse((myeloid_dcs@assays$RNA@counts["CCL13", ] > 0 & myeloid_dcs@assays$RNA@counts["CCL8", ] > 0), "CCL8+CCL13+", "Other_Myeloid_DC")
+
+```
+
+
+```{r}
+myeloid_dcs_wnnUMAP <- myeloid_dcs
+
+
+# 30 and 15
+DefaultAssay(myeloid_dcs_wnnUMAP) <- 'SCT'
+myeloid_dcs_wnnUMAP <- ScaleData(myeloid_dcs_wnnUMAP, features = rownames(myeloid_dcs_wnnUMAP))
+myeloid_dcs_wnnUMAP <- RunPCA(myeloid_dcs_wnnUMAP, assay = "SCT", npcs = 50, reduction.name = "pcaT", reduction.key = "pcaT_",)
+ElbowPlot(myeloid_dcs_wnnUMAP, ndims = 50)
+myeloid_dcs_wnnUMAP <- RunUMAP(myeloid_dcs_wnnUMAP, 
+                                assay = "SCT", 
+                                reduction = "pcaT", 
+                                reduction.name = "umapT", 
+                                reduction.key = "umapT_", 
+                                dims = 1:15,  # Increasing the number of dimensions used
+                                n.neighbors = 30,  # Adjusted for more global view
+                                min.dist = 0.01,  # Slightly increasing min.dist
+                                n.epochs = 1000,
+                                spread = 1,  # Adjust spread to balance local/global structure
+                                metric = "cosine", 
+                                init = "spectral", 
+                                learning_rate = 1)
+myeloid_dcs_wnnUMAP <- FindNeighbors(myeloid_dcs_wnnUMAP, dims = 1:15)
+myeloid_dcs_wnnUMAP <- FindClusters(myeloid_dcs_wnnUMAP, n.start = 50, n.iter = 20, algorithm = 3, resolution = 0.5, verbose = FALSE)
+
+
+DefaultAssay(myeloid_dcs_wnnUMAP) <- "ADT5"
+VariableFeatures(myeloid_dcs_wnnUMAP) <- rownames(myeloid_dcs_wnnUMAP[["ADT5"]])
+myeloid_dcs_wnnUMAP <- ScaleData(myeloid_dcs_wnnUMAP)
+myeloid_dcs_wnnUMAP <- RunPCA(myeloid_dcs_wnnUMAP, reduction.name = "apcaT", reduction.key = "apcaT_", npcs = 20, approx = FALSE)
+ElbowPlot(myeloid_dcs_wnnUMAP, ndims = 20, reduction = "apcaT")
+myeloid_dcs_wnnUMAP <- RunUMAP(myeloid_dcs_wnnUMAP, assay = "ADT5", reduction = "apcaT", reduction.name = "aUMAPT", reduction.key = "aUMAPT_", dims = 1:11, n.neighbors = 30, min.dist = 0.2, spread = 2, metric = "cosine", init = "spectral", learning_rate = 0.5)
+myeloid_dcs_wnnUMAP <- FindNeighbors(myeloid_dcs_wnnUMAP, dims = 1:11)
+
+
+DefaultAssay(myeloid_dcs_wnnUMAP) <- "SCT"
+myeloid_dcs_wnnUMAP <- FindMultiModalNeighbors(myeloid_dcs_wnnUMAP, reduction.list = list("pcaT", "apcaT"), dims.list = list(1:15, 1:11))
+myeloid_dcs_wnnUMAP <- RunUMAP(myeloid_dcs_wnnUMAP, nn.name = "weighted.nn", reduction.name = "wnn.umapT", reduction.key = "wnnUMAPT_", return.model = TRUE, n.neighbors = 30, min.dist = 0.2, spread = 2, metric = "cosine", init = "spectral", learning_rate = 0.5)
+myeloid_dcs_wnnUMAP <- FindClusters(myeloid_dcs_wnnUMAP, graph.name = "wsnn", n.start = 50, n.iter = 20, algorithm = 3, resolution = 0.5, verbose = FALSE)
+
+g <- DimPlot(myeloid_dcs_wnnUMAP, reduction = 'wnn.umapT', group.by = 'cell_subset', label = FALSE, repel = TRUE, label.size = 2.5) + scale_color_manual(values = c("asDC" = "#c0937e", "CAR-iDC" = "#3477a9", "CD14 mono" = "#96c3d8", "CD16 mono" = "#f5b375", "cDC2" = "#e45a5f", "pDC" = "#684797", "TAM" = "#a4d38e"))
+g
+ggsave("FNA_CCL8+CCL13+_wnnUMAP_CellPhase.eps", dpi=600, width=4.75, height=4) #5.5, 4
+
+DimPlot(myeloid_dcs_wnnUMAP, reduction = 'wnn.umapT', group.by = 'CCL8_CCL13_status', label = FALSE, repel = TRUE, label.size = 2.5)
+
+DimPlot(myeloid_dcs_wnnUMAP, reduction = 'wnn.umapT', group.by = 'cell_subset', label = FALSE, repel = TRUE, label.size = 2.5)
+
+DimPlot(myeloid_dcs_wnnUMAP, reduction = 'wnn.umapT', group.by = 'Phase', label = FALSE, repel = TRUE, label.size = 2.5) + scale_color_manual(values = c("G1" = "grey", "S" = "#61bceb", "G2M" = "#eba924"))
+```
+
+
+
+
+# wnnUMAPs showing CCL8 and CCL13
+```{r}
+#df2[['CCL8_CCL13_status']] <- ifelse(df2@assays$RNA@counts['CCL8', ] > 0 & df2@assays$RNA@counts['CCL13', ] > 0, 'CCL8+CCL13+ Myeloid/DCs',ifelse(df2@assays$RNA@counts['CCL8', ] > 0, 'CCL8+ Myeloid/DCs', ifelse(df2@assays$RNA@counts['CCL13', ] > 0, 'CCL13+ Myeloid/DCs', 'Other')))
+```
+
+
+```{r}
+#df2$CCL8_CCL13_status <- factor(df2$CCL8_CCL13_status, levels = c("Other", "CCL13+ Myeloid/DCs", "CCL8+ Myeloid/DCs", "CCL8+CCL13+ Myeloid/DCs"))
+
+#DimPlot(df2, reduction = 'wnn.umap', group.by = 'CCL8_CCL13_status', label = FALSE, repel = TRUE, label.size = 2.5, order = TRUE, pt.size=1) + scale_color_manual(values = c("CCL8+CCL13+ Myeloid/DCs" = "#fc0001", "CCL8+ Myeloid/DCs" = "#0000fc", "CCL13+ Myeloid/DCs" = "#016300", "Other" = "#bdbdbd"))
+```
+
+
+```{r}
+FeaturePlot(myeloid_dcs_wnnUMAP, feature = "CCL8", order = TRUE, reduction = "wnn.umapT", cols = c("lightgrey", "dark green"), min.cutoff = 0, max.cutoff = NA) + WhiteBackground()
+ggsave(filename = paste0("CCL8-MyeloidDC-wnnUMAP.eps"), width = 4.6, height = 4)
+```
+
+```{r}
+FeaturePlot(myeloid_dcs_wnnUMAP, feature = "CCL13", order = TRUE, reduction = "wnn.umapT", cols = c("lightgrey", "dark green"), min.cutoff = 0, max.cutoff = NA) + WhiteBackground()
+ggsave(filename = paste0("CCL13-MyeloidDC-wnnUMAP.eps"), width = 4.6, height = 4)
+```
+
+```{r}
+FeaturePlot(myeloid_dcs_wnnUMAP, feature = "CCL18", order = TRUE, reduction = "wnn.umapT", cols = c("lightgrey", "dark green"), min.cutoff = 0, max.cutoff = NA) + WhiteBackground()
+ggsave(filename = paste0("CCL18-MyeloidDC-wnnUMAP.eps"), width = 4.6, height = 4)
+```
+
+
+# Run CNA
+```{r}
+myeloid_dcs_wnnUMAP$y <- NA
+
+myeloid_dcs_wnnUMAP$y <- ifelse((myeloid_dcs_wnnUMAP@assays$RNA@counts["CCL13", ] > 0 & myeloid_dcs_wnnUMAP@assays$RNA@counts["CCL8", ] > 0), 2, 1)
+```
+
+```{r}
+mx_tag <- "CCL8-AND-CCL13"
+y <- "y" 
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+run_cna(myeloid_dcs_wnnUMAP, mx_tag, y, mx_sample = "patient_id", mx_graph, pt_colors, mx_cov = NULL)
+
+#================================================================================
+  
+
+mx <- myeloid_dcs_wnnUMAP
+
+mx_tag <- paste0(mx_tag, "-CNA-by-", mx_sample, "-", mx_graph, ifelse(!is.null(mx_cov), paste0("-by-", mx_cov), ""))
+
+	# 1. Perform CNA.
+	#if (mx_sample == "trace_clonotype" ) mx <- subset(mx, cells = which(!is.na(mx$trace_clonotype)))
+	if (!is.null(mx_cov)) {
+		mx@meta.data[, mx_cov] <- as.numeric(mx@meta.data[, mx_cov]) - 1.5
+		if (sum(mx@meta.data[, mx_cov] == 0.5) < 10 || sum(mx@meta.data[, mx_cov] == -0.5) < 10) return()
+	}
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 2) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	## Downsample unexpanded clones, fails otherwise.
+	mx_downsampled <- FALSE
+	if (mx_sample == "trace_clonotype" && ncol(mx) > 10000) {
+		if (y %in% c("construct", "log2FC_y")) {
+			mx_cells <- c()
+			for (pt in unique(mx$patient_id)) {
+				mx_pt_ids <- which(mx$y == 1 & mx$patient_id == pt)
+				mx_pt_cells <- sample(colnames(mx)[mx_pt_ids], size = min(500, length(mx_pt_ids)))
+				mx_cells <- c(mx_cells, mx_pt_cells)
+			}
+			mx_cells <- c(mx_cells, colnames(mx)[which(mx$y == 2)])
+			mx <- subset(mx, cells = mx_cells)
+		} else {
+			mx <- subset(mx, downsample = 500)
+		}
+		mx_downsampled <- TRUE
+		mx_tag <- paste0(mx_tag, "-downsampled")
+		mx <- add_nn_graphs(mx)
+	} else {
+		mx <- add_nn_graphs(mx)
+	}
+	mx@meta.data[, mx_sample] <- factor(mx@meta.data[, mx_sample])
+	mx <- try(association.Seurat(mx, test_var = 'y', samplem_key = mx_sample, graph_use = mx_graph, covs = mx_cov), silent = TRUE)
+	if (inherits(mx, "try-error")) return()
+	if (!("cna_ncorrs_fdr05" %in% colnames(mx@meta.data))) return()
+
+	# 2. Plot results.
+	dir.create("cna")
+	setwd("cna")
+	mx_500 <- subset(mx, downsample = 500)
+	for (mx_reduction in c("umapT", "wnn.umapT")) {
+		for (plot_limit in c(0.1, 0.2, 0.3, 0.5, 0.7)) {
+			## Correlation
+			FeaturePlot(mx_500, features = 'cna_ncorrs', reduction = mx_reduction) +
+				scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+				labs(title = paste('CNA:', y), color = 'Correlation', subtitle = sprintf('global p = %0.6f', mx@reductions$cna@misc$p))
+			ggsave(filename = paste0(mx_tag, "-Correlation-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			## FDR < 0.10
+			if (sum(mx_500$cna_ncorrs_fdr10 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr10', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.10', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR10-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			## FDR < 0.05
+			if (sum(mx_500$cna_ncorrs_fdr05 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr05', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.05', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+	rm(mx_500)
+
+	# 3. Perform DE on differentially abundant populations and write CNA results.
+	if (sum(mx$cna_ncorrs_fdr05 != 0) > 3) {
+		# mx <- subset(mx, cna_ncorrs_fdr05 != 0)
+		# do_de(mx, mx_tag, mx_assay = "SCT", mx_genes)
+		# do_de(mx, mx_tag, mx_assay = "ADT5", mx_genes)
+		cna_result <- mx@meta.data[, c("cna_ncorrs", "cna_ncorrs_fdr10", "cna_ncorrs_fdr05", "y", "patient_id")]
+		write.csv(cna_result, paste0(mx_tag, "-CNA_result.csv"))
+	}
+
+	setwd("../")
+	
+	myeloid_dcs_wnnUMAP@reductions
+```
+
+
+
+# mRNA expression for wnnUMAP
+```{r}
+# 1-3 for M2 macrophage, 4 for myeloid DCs, 5 for MDSCs, 6 eosinophil
+# ITGAX = CD11c
+# MRC1 = CD206
+# markers <- c("CD163", "MRC1", "CD209", "ITGAX", "CD33", "CD69") # + "CD180" (M2 macrophage) + "CD83" (DCs)
+
+
+markers <- c("CD163", "MRC1", "CD209", "ISG15", "ITGAX", "CD33", "ITGAM", "FCGR3A")
+
+FeaturePlot(myeloid_dcs_wnnUMAP, feature = markers, order = TRUE, reduction = "wnn.umapT", cols = c("lightgrey", "dark red"), min.cutoff = 0, max.cutoff = NA) +
+  theme(
+    axis.title = element_blank(),          # Remove axis titles
+    axis.text = element_blank(),           # Remove axis text (ticks)
+    axis.ticks = element_blank(),          # Remove axis ticks
+    legend.position = "none",              # Remove legend
+    plot.background = element_rect(fill = "white", color = NA) # Set background to white
+  )
+ggsave(filename = paste0("../MyeloidDC-ISG15-wnnUMAP.eps"), width = 4.6, height = 4)
+
+
+
+
+
+# USE THIS
+library(patchwork)
+# Generate feature plots with the specified formatting
+plots <- lapply(markers, function(marker) {
+  FeaturePlot(myeloid_dcs_wnnUMAP, feature = marker, order = TRUE, reduction = "wnn.umapT", 
+              cols = c("lightgrey", "dark red"), min.cutoff = 0, max.cutoff = NA) +
+    theme(
+      axis.title = element_blank(),          # Remove axis titles
+      axis.text = element_blank(),           # Remove axis text (ticks)
+      axis.ticks = element_blank(),          # Remove axis ticks
+      legend.position = "none",              # Remove legend
+      plot.background = element_rect(fill = "white", color = NA) # Set background to white
+    )
+})
+
+# Combine the plots using patchwork
+combined_plot <- wrap_plots(plots, ncol=4) + 
+  plot_layout(guides = 'collect') & 
+  theme(plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm"))
+
+combined_plot
+
+ggsave(filename = paste0("../CCL8CCL13-markers-wnnUMAP.eps"), width = 15, height = 8)
+```
+
+
+```{r}
+#saveRDS(myeloid_dcs_wnnUMAP, "../FNA-myeloid_dcs_wnnuMAP.rds")
+
+markers <- c("APOE", "CCL17", "CSF1R", "CD274", "ENPP2", "MS4A6E", "AIF1", "CD68", "MSR1", "IL10") 
+
+
+plots <- lapply(markers, function(marker) {
+  FeaturePlot(myeloid_dcs_wnnUMAP, feature = marker, order = TRUE, reduction = "wnn.umapT", 
+              cols = c("lightgrey", "dark red"), min.cutoff = 0, max.cutoff = NA) +
+    theme(
+      axis.title = element_blank(),          # Remove axis titles
+      axis.text = element_blank(),           # Remove axis text (ticks)
+      axis.ticks = element_blank(),          # Remove axis ticks
+      legend.position = "none",              # Remove legend
+      plot.background = element_rect(fill = "white", color = NA) # Set background to white
+    )
+})
+
+# Combine the plots using patchwork
+combined_plot <- wrap_plots(plots, ncol=5) + 
+  plot_layout(guides = 'collect') & 
+  theme(plot.margin = unit(c(0.5, 0.5, 0.5, 0.5), "cm"))
+
+combined_plot
+
+ggsave(filename = paste0("../CCL8CCL13-Supp-markers-wnnUMAP2.eps"), width = 18, height = 8)
+```
+```
+
+
+
+
+
+# Barplot of cell subsets expressing CCL8CCL13
+```{r}
+subset <- subset(myeloid_dcs_wnnUMAP, subset = CCL8_CCL13_status == "CCL8+CCL13+")
+unique(subset@meta.data$cell_subset)
+```
+
+
+
+```{r}
+phase_counts <- subset@meta.data %>%
+  group_by(Phase) %>%
+  summarise(cell_count = n()) %>%
+  mutate(Phase = factor(Phase, levels = c("G1", "S", "G2M")))
+
+colors <- c("G1" = "grey", "S" = "#61bceb", "G2M" = "#eba924")
+
+# Create the boxplot
+ggplot(phase_counts, aes(x = Phase, y = cell_count, fill = Phase)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = colors) +
+  theme_minimal() +
+  labs(title = "Number of Cells in Each Phase", x = "Phase", y = "Number of Cells") +
+  theme(
+    panel.background = element_rect(fill = "white", colour = "black", size = 0.5), # Ensure the panel background is white
+    panel.border = element_rect(colour = "black", fill = NA, size = 0.5), # Add border to the plot area
+    axis.title = element_text(size = 14, face = "bold"), # Bold and size the axis titles
+    axis.text = element_text(size = 12), # Size the axis text
+    axis.text.x = element_text(hjust = 1),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5), # Style the plot title
+    legend.title = element_text(size = 14, face = "bold"), # Style the legend title
+    legend.text = element_text(size = 12) # Style the legend text
+  ) +
+  labs(x = "Phase",
+       y = "Cell Count",
+       fill = "Phase") 
+
+ggsave(filename = paste0("FNA-CCL8CCL13-Phase", ".eps"), width = 4, height = 5.5)
+
+```
+
+
+
+
+
+```{r}
+df@meta.data
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Trajectory Inference UPDATED
+```{r}
+install.packages("BiocManager")
+install.packages("devtools")
+BiocManager::install(version = "3.14")
+
+BiocManager::install(c('BiocGenerics', 'DelayedArray', 'DelayedMatrixStats',
+                       'limma', 'lme4', 'S4Vectors', 'SingleCellExperiment',
+                       'SummarizedExperiment', 'batchelor', 'HDF5Array',
+                       'terra', 'ggrastr'))
+
+devtools::install_github('cole-trapnell-lab/monocle3')
+
+library(monocle3)
+library(ggplot2)
+library(dplyr)
+library(Seurat)
+```
+
+
+
+```{r}
+myeloid_dcs <- myeloid_dcs_wnnUMAP
+
+expression_matrix <- as(as.matrix(GetAssayData(myeloid_dcs, assay = "RNA", slot = "counts")), 'sparseMatrix')
+cell_metadata <- myeloid_dcs@meta.data %>% select(orig.ident, nCount_RNA, nFeature_RNA, interactome_group, cell_subset, CCL8_CCL13_status, Response_3m)
+genes <- data.frame(gene_short_name = row.names(expression_matrix), row.names = row.names(expression_matrix))
+
+
+cds <- new_cell_data_set(expression_matrix,
+                         cell_metadata = cell_metadata,
+                         gene_metadata = genes)
+
+cds
+```
+
+```{r}
+## Step 1: Normalize and pre-process the data
+cds <- preprocess_cds(cds, num_dim = 100)
+
+plot_pc_variance_explained(cds)
+```
+
+
+```{r}
+# Access the UMAP embeddings from Seurat
+wnnumap_coords <- myeloid_dcs@reductions$wnn.umapT@cell.embeddings
+
+# Create a data frame for the UMAP coordinates
+wnnumap_df <- as.data.frame(wnnumap_coords)
+colnames(wnnumap_df) <- c("wnnUMAP_1", "wnnUMAP_2")
+# Add UMAP coordinates to Monocle CDS
+reducedDims(cds)[["UMAP"]] <- wnnumap_df
+
+# Plot UMAP
+plot_cells(cds, color_cells_by = "CCL8_CCL13_status", label_groups_by_cluster = FALSE, reduction_method = "UMAP")
+
+```
+
+
+```{r}
+## Step 3: Reduce the dimensions using UMAP
+#cds <- reduce_dimension(cds, reduction_method = "UMAP")       
+## Step 4: Cluster the cells
+cds <- cluster_cells(cds, reduction_method = 'UMAP')
+## Step 5: Learn a graph
+cds <- learn_graph(cds)
+## Step 6: Order cells
+cds <- order_cells(cds, reduction_method = "UMAP")
+
+plot_cells(cds)
+```
+
+
+```{r}
+plot_cells(cds, color_cells_by = "CCL8_CCL13_status", cell_size = 0.5)
+plot_cells(cds, color_cells_by = "cell_subset", cell_size = 0.5)
+plot_cells(cds, genes=c("CD163", "MRC1", "CD209", "CD180"), cell_size = 0.5, label_cell_groups = FALSE, show_trajectory_graph = FALSE)
+plot_cells(cds, color_cells_by = "partition")
+```
+
+## Handpick the root node from the earliest time point
+```{r}
+cds <- order_cells(cds)
+```
+
+```{r}
+plot_cells(cds,
+           color_cells_by = "pseudotime",
+           label_cell_groups=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=1.5)
+```
+
+
+
+## Determine the root node programmtically
+```{r}
+colData(cds)$partitions = partitions(cds)
+
+# a helper function to identify the root principal points:
+get_earliest_principal_node <- function(cds, time_bin="1"){
+  cell_ids <- which(colData(cds)[, "partitions"] == time_bin)
+  
+  closest_vertex <- cds@principal_graph_aux[["UMAP"]]$pr_graph_cell_proj_closest_vertex
+  closest_vertex <- as.matrix(closest_vertex[colnames(cds), ])
+  root_pr_nodes <- igraph::V(principal_graph(cds)[["UMAP"]])$name[as.numeric(names(which.max(table(closest_vertex[cell_ids,]))))]
+  root_pr_nodes
+}
+
+cds <- order_cells(cds, root_pr_nodes=get_earliest_principal_node(cds))
+
+unique(colData(cds)$partitions)
+```
+
+
+```{r}
+# find all possible partitions
+#all_partitions <- unique(cds@clusters$UMAP$partitions)
+#all_partitions <- all_partitions[all_partitions != "1"]
+
+# set all partitions to 1
+#cds@clusters$UMAP$partitions[cds@clusters$UMAP$partitions %in% all_partitions] <- "1"
+
+#learn_graph(cds, use_partition = FALSE)
+
+
+
+
+
+
+colData(cds)$partitions <- "1"
+
+cds <- learn_graph(cds, use_partition = FALSE)
+
+cds <- order_cells(cds, reduction_method = 'UMAP')
+
+
+
+
+
+
+# asDC" = "#faee85", "CAR=iDC" = "blue", "CD14 mono" = "#D8614F", "CD16 mono" = "#F18C25", "cDC2" = "#715EA9", "pDC" = "#6A9ACE", "TAM" = "#1E803D"
+
+plot_cells(cds,
+           color_cells_by = "CCL8_CCL13_status",
+           label_cell_groups=FALSE,
+           label_leaves=TRUE,
+           label_branch_points=TRUE,
+           graph_label_size=1.5) + scale_color_manual(values = c("CCL8+CCL13+" = "#d2431c", "Other_Myeloid_DC" = "#046bbf")) +
+  theme_minimal() +
+  theme(text = element_text(size = 12, family = "Arial"), 
+    legend.position = "right",  
+    legend.title = element_text(size = 12, face = "bold"),  
+    legend.text = element_text(size = 10)) +
+  labs(
+    title = "Cellular Trajectory Map",
+    x = "wnnUMAP_1",  # Customize based on your dimensionality reduction
+    y = "wnnUMAP_2"   # Customize based on your dimensionality reduction
+  )
+
+ggsave(filename = paste0("../CCL8-CCL13-Trajectory-wnnUMAP.eps"), width = 6, height = 4)
+```
+
+## Determine staring and ending nodes manually (SUBSET)
+```{r}
+#cds_sub <- choose_graph_segments(cds)
+
+
+## Choose cells directly
+#cds_subset <- choose_cells(cds)
+```
+
+## Look at genes
+```{r}
+genes <- c("CD163", "MRC1", "MS4A4A", "MS4A6A")
+cds_subset <- cds[rowData(cds)$gene_short_name %in% genes,]
+cds_subset <- order_cells(cds_subset)
+plot_cells(cds_subset,
+           color_cells_by = "pseudotime",
+           label_cell_groups=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=1.5) + scale_color_gradient(low = "lightgrey", high = "darkgreen")
+```
+
+```{r}
+plot_genes_in_pseudotime(cds_subset,
+                         color_cells_by="CCL8_CCL13_status",
+                         min_expr=0.5) + scale_color_manual(values = c("CCL8+CCL13+" = "#d2431c", "Other_Myeloid_DC" = "#046bbf")) +
+  theme_minimal() +
+  theme(text = element_text(size = 12, family = "Arial"), 
+    legend.position = "right",  
+    legend.title = element_text(size = 12, face = "bold"),  
+    legend.text = element_text(size = 10))
+
+ggsave(filename = paste0("../CCL8-CCL13-Trajectory-marker.eps"), width = 6, height = 4)
+
+```
+
+
+```{r}
+a <- plot_cells(cds_subset,
+           color_cells_by = "pseudotime",
+           label_cell_groups=True,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=1.5)
+b <- plot_cells(cds_subset,
+           color_cells_by = "Response_3m",
+           label_cell_groups=FALSE,
+           label_leaves=FALSE,
+           label_branch_points=FALSE,
+           graph_label_size=1.5)
+b
+```
+
+
+
+
+# Differential expression
+
+## Regression analysis
+```{r}
+marker_genes <- c("CD163",
+                  "MRC1",
+                  "CD209",
+                  "CD180",
+                  "LYZ",
+                  "CD69")
+cds_subset <- cds[rowData(cds)$gene_short_name %in% marker_genes,]
+```
+
+```{r}
+gene_fits <- fit_models(cds_subset, model_formula_str = "~CCL8_CCL13_status")
+
+fit_coefs <- coefficient_table(gene_fits)
+
+emb_time_terms <- fit_coefs %>% filter(term == "CCL8_CCL13_statusOther_Myeloid_DC")
+emb_time_terms %>% filter (q_value < 0.05) %>%
+         select(gene_short_name, term, q_value, estimate)
+emb_time_terms # Genes that significantly vary as a function between two groups
+```
+
+```{r}
+plot_genes_violin(cds_subset, group_cells_by="CCL8_CCL13_status", ncol=2) +
+      theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+
+```{r}
+plot_genes_hybrid(cds_subset, group_cells_by="CCL8_CCL13_status", ncol=2) +
+      theme(axis.text.x=element_text(angle=45, hjust=1))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+FeaturePlot(myeloid_dcs, feature = c("SPP1", "C1QC", "ISG15", "FN1", "VCAN", "CX3CR1", "GPNMB", "IL1B", "INHBA", "LYVE1", "NLRP3", "PPARG"), order = TRUE, reduction = "wnn.umap", cols = c("lightgrey", "dark green"), min.cutoff = 0, max.cutoff = NA) + WhiteBackground()
+```
+
+
+```{r}
+FeaturePlot(myeloid_dcs, feature = c("CD14", "CD16"), order = TRUE, reduction = "wnn.umap", cols = c("lightgrey", "dark green"), min.cutoff = 0, max.cutoff = NA) + WhiteBackground()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Isolate CCL8+ and CCL13+ Myeloid DCs out of Myeloid DCs (Stacked Barplot)
+```{r}
+df[['cell_type_CCL8']] <- ifelse(df@assays$RNA@counts['CCL8', ] > 0, 'CCL8+ Myeloid/DC', df$interactome_group)
+df[['cell_type_CCL13']] <- ifelse(df@assays$RNA@counts['CCL13', ] > 0, 'CCL13+ Myeloid/DC', df$interactome_group)
+
+data <- df@meta.data[, c("patient_id", "cell_type_CCL8", "cell_type_CCL13")]
+head(data)
+
+data$patient_id <- substring(data$patient_id, first = 3)
+data
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+# You might need to preprocess or verify the data structure, here's an example
+
+summarized_data <- data %>%
+  group_by(patient_id) %>%
+  summarise(
+    Total = n(),
+    CCL8_Myeloid_DC = sum(cell_type_CCL8 == "CCL8+ Myeloid/DC"),
+    CCL13_Myeloid_DC = sum(cell_type_CCL13 == "CCL13+ Myeloid/DC"),
+    Proportion_CCL8 = CCL8_Myeloid_DC / Total,
+    Proportion_CCL13 = CCL13_Myeloid_DC / Total,
+  ) %>%
+  mutate(patient_id = factor(patient_id, levels = c("026", "115", "116", "125", "129", "253", "014", "025", "031", "110", "276", "011", "263", "282", "010", "015", "245", "079", "237")))
+
+
+# Define custom colors for each cell type
+#colors <- c("026" = "dark blue", "115" = "dark blue", "116"= "dark blue", "125"= "dark blue", "129"= "dark blue", "253"= "dark blue", "014"= "dark blue", "025"= "dark blue", "031"= "dark blue", "110"= "dark blue", "276"= "dark blue", "011"= "dark blue", "263"= "dark red", "282"= "dark red", "010"= "dark red", "015"= "dark red", "245"= "dark red", "079"= "dark red", "237"= "dark red")
+
+colors <- c("CCL8+ Myeloid/DC" = "dark red", "CCL13+ Myeloid/DC" = "dark green")
+
+summarized_data
+
+```
+
+```{r}
+library(tidyr)
+long_data <- summarized_data %>%
+  select(patient_id, Proportion_CCL8, Proportion_CCL13) %>%
+  pivot_longer(
+    cols = c("Proportion_CCL8", "Proportion_CCL13"), 
+    names_to = "Cell_Type", 
+    values_to = "Proportion"
+  )
+
+# Convert 'Cell_Type' to a more readable format
+long_data$Cell_Type <- factor(long_data$Cell_Type, levels = c("Proportion_CCL8", "Proportion_CCL13"),
+                              labels = c("CCL8+ Myeloid/DC", "CCL13+ Myeloid/DC"))
+
+long_data
+```
+
+
+```{r}
+  ggplot(long_data, aes(x = patient_id, y = Proportion, fill = Cell_Type)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = colors) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", colour = "black", size = 0.5), # Ensure the panel background is white
+    panel.border = element_rect(colour = "black", fill = NA, size = 0.5), # Add border to the plot area
+    axis.title = element_text(size = 14, face = "bold"), # Bold and size the axis titles
+    axis.text = element_text(size = 12), # Size the axis text
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5), # Style the plot title
+    legend.title = element_text(size = 14, face = "bold"), # Style the legend title
+    legend.text = element_text(size = 12) # Style the legend text
+  ) +
+  labs(title = "Proportion of CCL8+ and CCL13+ Myeloid/DCs by Patient",
+       x = "Patient ID",
+       y = "Proportion",
+       fill = "Cell Type")
+
+ggsave(filename = paste0("CCL8-CCL13-Proportions-Stacked-BarPlot.eps"), width = 8, height = 6)
+```
+
+
+# A barplot showing proportion of CCL8+CCL13+ subsets in patients
+```{r}
+df[['cell_type_CCL8_CCL13']] <- ifelse(df@assays$SCT@counts['CCL8', ] > 0 & df@assays$SCT@counts['CCL13', ] > 0, 'CCL8+CCL13+ Myeloid/DC', df$interactome_group)
+
+data <- df@meta.data[, c("patient_id", "cell_type_CCL8_CCL13")]
+head(data)
+
+data$patient_id <- substring(data$patient_id, first = 3)
+data
+```
+
+```{r}
+# Load necessary libraries
+library(ggplot2)
+library(dplyr)
+
+# You might need to preprocess or verify the data structure, here's an example
+
+summarized_data <- data %>%
+  group_by(patient_id) %>%
+  summarise(
+    Total = n(),
+    CCL8_CCL13_Myeloid_DC = sum(cell_type_CCL8_CCL13 == "CCL8+CCL13+ Myeloid/DC"),
+    Proportion_CCL8_CCL13 = CCL8_CCL13_Myeloid_DC / Total,
+  ) %>%
+  mutate(patient_id = factor(patient_id, levels = c("026", "115", "116", "125", "129", "253", "014", "025", "031", "110", "276", "011", "263", "282", "010", "015", "245", "079", "237")))
+
+
+# Define custom colors for each cell type
+#colors <- c("026" = "dark blue", "115" = "dark blue", "116"= "dark blue", "125"= "dark blue", "129"= "dark blue", "253"= "dark blue", "014"= "dark blue", "025"= "dark blue", "031"= "dark blue", "110"= "dark blue", "276"= "dark blue", "011"= "dark blue", "263"= "dark red", "282"= "dark red", "010"= "dark red", "015"= "dark red", "245"= "dark red", "079"= "dark red", "237"= "dark red")
+
+colors <- c("CCL8+CCL13+ Myeloid/DC" = "#DAA520")
+
+summarized_data
+
+```
+
+```{r}
+library(tidyr)
+long_data <- summarized_data %>%
+  select(patient_id, Proportion_CCL8_CCL13) %>%
+  pivot_longer(
+    cols = c("Proportion_CCL8_CCL13"), 
+    names_to = "Cell_Type", 
+    values_to = "Proportion"
+  )
+
+# Convert 'Cell_Type' to a more readable format
+long_data$Cell_Type <- factor(long_data$Cell_Type, levels = c("Proportion_CCL8_CCL13"),
+                              labels = c("CCL8+ CCL13+ Myeloid/DC"))
+
+long_data
+```
+
+
+```{r}
+  ggplot(summarized_data, aes(x = patient_id, y = Proportion_CCL8_CCL13)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_manual(values = colors) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", colour = "black", size = 0.5), # Ensure the panel background is white
+    panel.border = element_rect(colour = "black", fill = NA, size = 0.5), # Add border to the plot area
+    axis.title = element_text(size = 14, face = "bold"), # Bold and size the axis titles
+    axis.text = element_text(size = 12), # Size the axis text
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5), # Style the plot title
+    legend.title = element_text(size = 14, face = "bold"), # Style the legend title
+    legend.text = element_text(size = 12) # Style the legend text
+  ) + labs(x = "Patient ID",
+       y = "CCL8+ CCL13+ Myeloid/DCs by Patient (%)",
+       fill = "Cell Type")
+
+ggsave(filename = paste0("CCL8-CCL13-Proportions-Stacked-BarPlot.eps"), width = 8, height = 6)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Analyzing the cell cycle phases of CCL8+CCL13+ Myeloid subset
+```{r}
+getwd()
+df <- readRDS("FNA_InteractomeAnalysis_2.rds")
+df$interactome_group[which(df@meta.data$interactome_group == "Tcon")] <- "Tconv"
+df$interactome_group[which(df@meta.data$interactome_group == "Myeloid DC")] <- "Myeloid/DC"
+
+df[['CCL8_CCL13']] <- ifelse(df@assays$SCT@data['CCL8', ] > 0 & df@assays$SCT@data['CCL13', ] > 0 & df@meta.data$interactome_group == "Myeloid/DC", 'yes', 'no')
+table(df@meta.data$CCL8_CCL13)
+```
+
+```{r}
+metadata <- df@meta.data
+
+# Calculate the percentages for cells that are "yes" for "CCL8_CCL13"
+ccl8_ccl13_cells <- metadata %>% 
+  filter(CCL8_CCL13 == "yes") %>%
+  group_by(Phase) %>%
+  summarize(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100,
+         group = "CCL8+CCL13+")
+
+# Calculate the percentages for cells that are "Myeloid/DC" for "interactome_group"
+myeloid_dc_cells <- metadata %>% 
+  filter(interactome_group == "Myeloid/DC") %>%
+  group_by(Phase) %>%
+  summarize(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100,
+         group = "Myeloid/DCs")
+
+# Calculate the percentages for TAMs
+TAM_cells <- metadata %>% 
+  filter(cell_subset == "TAM") %>%
+  group_by(Phase) %>%
+  summarize(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100,
+         group = "TAMs")
+
+# Combine the data frames
+combined_data <- bind_rows(ccl8_ccl13_cells, myeloid_dc_cells, TAM_cells)
+combined_data$group <- factor(combined_data$group, levels = c("Myeloid/DCs", "TAMs", "CCL8+CCL13+"))
+
+colors <- c("G1" = "grey", "S" = "#61bceb", "G2M" = "#eba924")
+combined_data$Phase <- factor(combined_data$Phase, levels = c("G2M", "S", "G1"))
+
+# Create the stacked barplot
+ggplot(combined_data, aes(x = percentage, y = group, fill = Phase)) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = colors) +
+  theme_minimal() +
+  theme(
+    panel.background = element_rect(fill = "white", colour = "black", size = 0.5), # Ensure the panel background is white
+    panel.border = element_rect(colour = "black", fill = NA, size = 0.5), # Add border to the plot area
+    axis.title = element_text(size = 14, face = "bold"), # Bold and size the axis titles
+    axis.text = element_text(size = 12), # Size the axis text
+    axis.text.x = element_text(angle = 0, hjust = 0.5),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5), # Style the plot title
+    legend.title = element_text(size = 14, face = "bold"), # Style the legend title
+    legend.text = element_text(size = 12) # Style the legend text
+  ) +
+  labs(x = "Percent in phase") 
+
+getwd()
+ggsave("../FNA_CCL8+CCL13+_CellCycle_Barplot.eps", dpi=600, width=6.75, height=4)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

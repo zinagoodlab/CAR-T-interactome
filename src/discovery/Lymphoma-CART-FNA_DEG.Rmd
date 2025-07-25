@@ -1,0 +1,1804 @@
+---
+title: "Lymphoma-CART-DEG"
+author: "Kelvin Mo"
+date: "2024-04-12"
+output: html_document
+
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+rm(list = ls())
+gc()
+```
+
+
+
+############################### Libraries ###############################
+```{r}
+# Install CNA algorithm
+library(devtools)
+#install_github('korsunskylab/rcna')
+#install.packages("enrichplot")
+#BiocManager::install("DESeq2")
+
+library(tidyverse)
+library(dplyr)  # %>%
+library(rstatix)  # wilcox_test
+library(ggplot2)  # graphics
+library(ggthemes)  # colors
+library(harmony)  # intergation
+library(glue)  # needed for CNA
+library(rcna)  # CNA
+# library(speckle)  # propeller
+# library(limma)  # needed for propeller
+library(Seurat)  # v4.0.3 
+library(future)  # parallel computing for Seurat
+library(future.apply)  # lapply for future to control random seeds
+library(biomaRt)  # for DE
+library(org.Hs.eg.db)  # for DE
+library(EnhancedVolcano)  # volcano plot
+library(ReactomePA)  # for DE
+library(enrichplot)  # for DE
+library(DESeq2)  # DESeq2
+
+options(enrichplot.colours = c("red","blue"))
+```
+
+
+
+```{r}
+# Access parallelization, only when run in R directly and not on MS Windows
+if (supportsMulticore()) plan("multicore", workers = 24 - 1)
+options(future.globals.maxSize = 1000000 * 1024^2, future.rng.onMisuse = "ignore")  # 1000 Gb
+```
+
+
+
+```{r}
+########################### Define Constants ############################
+kMinCells <- 1000  # minimum number of cells for multimodal analysis
+```
+
+
+
+
+```{r}
+# Define a function to build NN graphs for original and integrated enbedding.
+add_nn_graphs <- function(mx) {
+	## Original T cell embedding.
+	mx <- FindNeighbors(mx, reduction = "pca", dims = 1:30, verbose = FALSE)
+	if (ncol(mx) > kMinCells) {
+		mx <- FindMultiModalNeighbors(mx, reduction.list = list("pca", "apca"), dims.list = list(1:30, 1:10), verbose = FALSE)
+	} else {
+		mx <- FindNeighbors(mx, reduction = "apca", dims = 1:10, verbose = FALSE)
+		mx@graphs$wknn <- mx@graphs$ADT5_nn
+		mx@graphs$wsnn <- mx@graphs$ADT5_snn
+	}
+
+	# ## Integrated T cell embedding.
+	# mx <- FindNeighbors(mx, reduction = "pca1", dims = 1:30,
+	# 										graph.name = c("SCT_nn_int", "SCT_snn_int"), verbose = FALSE)
+	# if (ncol(mx) > kMinCells) {
+	# 	mx <- FindMultiModalNeighbors(mx, reduction.list = list("pca1", "apca1"),
+	# 																knn.graph.name = "wknn_int", snn.graph.name = "wsnn_int",
+	# 																dims.list = list(1:30, 1:10), verbose = FALSE)
+	# } else {
+	# 	mx <- FindNeighbors(mx, reduction = "apca1", dims = 1:10,
+	# 											graph.name = c("ADT5_nn_int", "ADT5_snn_int"), verbose = FALSE)
+	# 	mx@graphs$wknn_int <- mx@graphs$ADT5_nn_int
+	# 	mx@graphs$wsnn_int <- mx@graphs$ADT5_snn_int
+	# }
+
+	return(mx)
+}
+```
+
+
+
+```{r}
+# Define a function to fix dashes in DE results and remove MT, TCR/BCR, and sex genes.
+rm_clono_features <- function(mx, de_genes) {
+	dash_genes <- rownames(mx)[grep(pattern = "-", rownames(mx))]
+	dash_genes <- future_vapply(dash_genes, function(x) gsub(pattern = "-", replacement = ".", x), "")
+	rownames(de_genes) <- future_vapply(rownames(de_genes), function(x) {
+		ifelse(x %in% dash_genes, gsub(pattern = "\\.", replacement = "-", x), x)
+	}, "")
+	rm_genes <- c(get_clono_features(rownames(de_genes)),
+								grep(pattern = "MT-", rownames(de_genes), fixed = TRUE))
+	if (length(rm_genes) > 0) de_genes <- de_genes[-rm_genes, ]
+	de_genes <- subset(de_genes, !is.na(p_val))
+
+	return(de_genes)
+}
+```
+
+
+
+```{r}
+# Define a function to get feature names defining TCR and BCR clonotypes,
+# as well as sex-associated genes.
+get_clono_features <- function(features) {
+	clono_features <- unique(c(grep(pattern = "TRAV", features, fixed = TRUE),
+														 grep(pattern = "TRAJ", features, fixed = TRUE),
+														 grep(pattern = "TRBV", features, fixed = TRUE),
+														 grep(pattern = "TRBJ", features, fixed = TRUE),
+														 grep(pattern = "TRDV", features, fixed = TRUE),
+														 grep(pattern = "TRDJ", features, fixed = TRUE),
+														 grep(pattern = "TRGV", features, fixed = TRUE),
+														 grep(pattern = "TRGJ", features, fixed = TRUE),
+														 grep(pattern = "IGKV", features, fixed = TRUE),
+														 grep(pattern = "IGKJ", features, fixed = TRUE),
+														 grep(pattern = "IGLV", features, fixed = TRUE),
+														 grep(pattern = "IGLJ", features, fixed = TRUE),
+														 grep(pattern = "IGHV", features, fixed = TRUE),
+														 grep(pattern = "IGHJ", features, fixed = TRUE),
+														 which(features %in% c("XIST", "RPS4Y1", "RPS4Y2"))))
+	return (clono_features)
+}
+```
+
+
+
+```{r}
+require(DOSE)
+
+# Define a function to perform pathway analysis using ReactomePA.
+do_pathway <- function(de_genes, mx_name) {
+	## Load the appropriate ensembls to pull the human genes and pathways from.
+	## This is a publicly available repository of human genes and pathways, but
+	## there is not edit access to add your own genes/pathways at the moment.
+	if (nrow(de_genes) < 3) return (NULL)
+
+	de_ids <- human_ids[which(human_ids$hgnc_symbol %in% rownames(de_genes)), ]
+	## Perform pathway analysis
+	de_pathway <- enrichPathway(gene = de_ids$entrezgene_id, organism = "human", pvalueCutoff = 0.05, readable = TRUE)
+
+	if (!is.null(de_pathway)) {
+		n_pathway <- length(which(de_pathway@result$p.adjust < 0.05))
+		if (n_pathway > 0) {
+			dotplot(de_pathway, orderBy = "GeneRatio", showCategory = min(n_pathway, 25))
+			ggsave(paste0(mx_name, "-pathway-top25.eps"), width = 10, height = min(n_pathway / 5 + 2, 20))
+			dotplot(de_pathway, orderBy = "GeneRatio", showCategory = min(n_pathway, 10))
+			ggsave(paste0(mx_name, "-pathway-top10.eps"), width = 7, height = 5)
+		  
+    	#de_pathway@result$sign <- NA
+
+      # Loop through each pathway and determine its regulation status
+      #for (i in seq_len(nrow(de_pathway@result))) {
+        #pathway_genes <- de_pathway@result[i, "geneID"]
+        #pathway_genes <- unlist(strsplit(pathway_genes, "/"))
+        
+        # Find the regulation status of genes in the pathway
+        #gene_status <- de_ids$regulation[de_ids$entrezgene_id %in% pathway_genes]
+        
+        # Determine if the majority of genes are upregulated or downregulated
+        #if (sum(gene_status == "upregulated") > sum(gene_status == "downregulated")) {
+          #de_pathway@result$sign[i] <- "upregulated"
+        #} else {
+          #de_pathway@result$sign[i] <- "downregulated"
+        #}
+      #}
+      
+      # Verify the 'sign' column was added correctly
+      #if (!"sign" %in% colnames(de_pathway@result)) {
+      #  stop("The 'sign' column was not added correctly. Please check the 'de_ids' and 'de_pathway' objects.")
+      #}
+      
+      # Check the distribution of the 'sign' column
+      #table(de_pathway@result$sign)
+      
+      # Create the dotplot
+      #plot <- dotplot(de_pathway, orderBy = "GeneRatio", showCategory = 10, split = "sign") + facet_grid(. ~ sign)
+			#ggsave("ReactomePA-CCL18-pathway-top10.eps", width = 7, height = 5.5)
+			de_pathway <- de_pathway@result
+			write.csv(de_pathway, paste0(mx_name, "-pathway-result.csv"))
+		}
+	}
+}
+```
+
+
+
+
+```{r}
+# Define a function to make a volcano and dot plots for DE results.
+plot_de_result <- function(mx, de_genes, mx_name, mx_assay, de_log2fc, max_log2fc, de_seq = FALSE, p_adj = TRUE) {
+	# 1. Volcano plot
+	if (nrow(de_genes) < 2) return()
+	mx_name <- paste0(mx_name, ifelse(p_adj, "-p_adj", "-p_orig"))
+	if (!p_adj) {
+		de_genes <- de_genes[, -which(colnames(de_genes) == "p_val_adj")]
+		colnames(de_genes)[which(colnames(de_genes) == "p_val")] <- "p_val_adj"
+	}
+	de_genes <- subset(de_genes, !is.na(p_val_adj))
+	if (mx_assay == "scenic") {
+		max_log2fc <- 0.5
+		if (quantile(abs(de_genes$avg_log2FC), 0.99, na.rm = TRUE) > max_log2fc) max_log2fc <- quantile(abs(de_genes$avg_log2FC), 0.99, na.rm = TRUE)
+		de_log2fc <- log2(1.02) # 2% increase in TF activity
+	}
+	log2fc_lim <- min(ceiling(max(abs(de_genes$avg_log2FC[which(!is.infinite(de_genes$avg_log2FC))]))), max_log2fc)
+	if (sum(de_genes$avg_log2FC > max_log2fc, na.rm = TRUE) > 0) de_genes$avg_log2FC[which(de_genes$avg_log2FC > max_log2fc)] <- max_log2fc
+	if (sum(de_genes$avg_log2FC < -max_log2fc, na.rm = TRUE) > 0) de_genes$avg_log2FC[which(de_genes$avg_log2FC < -max_log2fc)] <- -max_log2fc
+	volcano_point_size <- 0.1 + (abs(log10(de_genes$p_val_adj)) / min(300, max(abs(log10(de_genes$p_val_adj))))) * abs(de_genes$avg_log2FC) / 4
+	signif_col <- 'red4'
+	if (mx_assay == "scenic") {
+		signif_col <- 'cyan4'
+		volcano_point_size <- volcano_point_size * 10
+	}
+	EnhancedVolcano(de_genes,
+									lab = rownames(de_genes),
+									x = "avg_log2FC",
+									y = 'p_val_adj',
+									xlim = c(-log2fc_lim, log2fc_lim),
+									title = mx_name,
+									pCutoff = 0.05,
+									FCcutoff = de_log2fc,  # all genes with 50% FC
+									pointSize = volcano_point_size,
+									labSize = 3.0,
+									# drawConnectors = TRUE,
+									col = c('gray', 'gray', 'gray', signif_col),
+									colAlpha = 1)
+	ggsave(filename = paste0(mx_name, "-Volcano.eps"), width = 7, height = 8.5)
+	de_genes_signif <- subset(de_genes, p_val_adj < 0.05 & (avg_log2FC > de_log2fc | avg_log2FC < -de_log2fc))
+
+	# 2. Perform pathway analysis.
+	min_pct_diff <- abs(de_genes_signif$pct.1 - de_genes_signif$pct.2)
+	if (mx_assay == "SCT" && nrow(de_genes_signif) >= 5) {
+		## All genes.
+		do_pathway(de_genes_signif, mx_name)
+		## Upregulated genes.
+		do_pathway(de_genes_signif[which(de_genes_signif$avg_log2FC > 0), ], paste0(mx_name, "-Up"))
+		## Downregulated genes.
+		do_pathway(de_genes_signif[which(de_genes_signif$avg_log2FC < 0), ], paste0(mx_name, "-Down"))
+		if (!de_seq) {
+			min_diff <- 0.1
+			## All genes.
+			do_pathway(de_genes_signif[which(min_pct_diff >= min_diff), ], paste0(mx_name, "-min_pct_diff-", min_diff))
+			## Upregulated genes.
+			do_pathway(de_genes_signif[which(min_pct_diff >= min_diff & de_genes_signif$avg_log2FC > 0), ], paste0(mx_name, "-min_pct_diff-", min_diff, "-Up"))
+			## Downregulated genes.
+			do_pathway(de_genes_signif[which(min_pct_diff >= min_diff & de_genes_signif$avg_log2FC < 0), ], paste0(mx_name, "-min_pct_diff-", min_diff, "-Down"))
+		}
+	}
+
+	# 3. Dot plots
+	if (nrow(de_genes_signif) > 100) {
+		de_genes_signif <- de_genes_signif[1:100, ]
+		min_pct_diff <- min_pct_diff[1:100]
+		de_name <- "Top-100"
+	} else {
+		de_name <- "All"
+	}
+	if (nrow(de_genes_signif) > 0) {
+		DefaultAssay(mx) <- mx_assay
+		dot_genes <- intersect(rownames(de_genes_signif), rownames(mx))
+		DotPlot(mx, features = dot_genes, group.by = "y", dot.scale = 8) + RotatedAxis() + scale_color_gradient2_tableau(trans = "reverse")
+		ggsave(filename = paste0(mx_name, "-DotPlot-", de_name, ".eps"), width = 6 + round(nrow(de_genes_signif) / 4), height = 2.5)
+		DotPlot(mx, features = dot_genes, group.by = "y", dot.scale = 8) + RotatedAxis() + scale_color_gradient2_tableau(trans = "reverse")
+		ggsave(filename = paste0(mx_name, "-DotPlot-", de_name, "-Scale.eps"), width = 6 + round(nrow(de_genes_signif) / 4), height = 5)
+		DotPlot(mx, features = dot_genes, group.by = "patient_id", split.by = "y", dot.scale = 8) + RotatedAxis()
+		ggsave(filename = paste0(mx_name, "-DotPlot-", de_name, "-by-patient.eps"), width = 6 + round(nrow(de_genes_signif) / 4), height = 2 + length(unique(mx$sample)) * 3 / 4)
+		if (mx_assay == "SCT" && !de_seq) {
+			de_genes_signif <- de_genes_signif[which(min_pct_diff >= 0.1), ]
+			if (nrow(de_genes_signif) > 0) {
+				dot_genes <- intersect(rownames(de_genes_signif), rownames(mx))
+				DotPlot(mx, features = dot_genes, group.by = "y", dot.scale = 8) + RotatedAxis() + scale_color_gradient2_tableau(trans = "reverse")
+				ggsave(filename = paste0(mx_name, "-DotPlot-min_pct_diff-0.1-", de_name, ".eps"), width = 6 + round(nrow(de_genes_signif) / 4), height = 2.5)
+				DotPlot(mx, features = dot_genes, group.by = "y", dot.scale = 8) + RotatedAxis() + scale_color_gradient2_tableau(trans = "reverse")
+				ggsave(filename = paste0(mx_name, "-DotPlot-min_pct_diff-0.1-", de_name, "-Scale.eps"), width = 6 + round(nrow(de_genes_signif) / 4), height = 5)
+				DotPlot(mx, features = dot_genes, group.by = "patient_id", split.by = "y", dot.scale = 8) + RotatedAxis()
+				ggsave(filename = paste0(mx_name, "-DotPlot-min_pct_diff-0.1-", de_name, "-by-patient.eps"), width = 6 + round(nrow(de_genes_signif) / 4), height = 2 + length(unique(mx$sample)) * 3 / 4)
+			}
+		}
+	}
+}
+```
+
+
+
+```{r}
+# Define a function to check mean and pct expression across patients based on DE results.
+# Also perform DESeq2 analysis using pseudo-bulk samples.
+test_mean_pct <- function(mx, de_genes_signif, mx_name, mx_assay,
+													mx_sample = "patient_id", mx_genes, de_log2fc, max_log2fc) {
+	if (nrow(de_genes_signif) < 2) return()
+	if (mx_sample == "trace_clonotype") mx <- subset(mx, cells = which(!is.na(mx$trace_clonotype)))
+	mx_name <- paste0(mx_name, "-by-", mx_sample)
+	dot_genes <- rownames(de_genes_signif)
+	if (mx_assay == "SCT") dot_genes <- unique(c(dot_genes, mx_genes))
+	dot_genes <- intersect(dot_genes, rownames(mx))
+	mx$de_sample <- mx@meta.data[, mx_sample]
+	if (length(unique(mx$de_sample)) < 2) return()
+	mx$de_sample <- factor(mx$de_sample)
+	mx_data <- data.frame(y = mx$y, de_sample = mx$de_sample,
+												FetchData(mx, vars = dot_genes, slot = "data"))
+	## Mean expression.
+	mx_mean <- mx_data %>% group_by(y, de_sample) %>% summarise_all(mean, na.rm = TRUE)
+	mx_summary <- mx_mean[, -2] %>% group_by(y) %>% get_summary_stats()
+	if (mx_summary$n[which(mx_summary$y == 1)][1] >= 3 && mx_summary$n[which(mx_summary$y == 2)][1] >= 3) {
+		mx_pval <- mx_mean[, -c(1:2)] %>% ungroup() %>% summarise_all(function(x) {
+			ifelse(sum(x) > 0.01, wilcox_test(data.frame(x, y = mx_mean$y), x ~ y)$p, 1) })
+		mx_summary$p <- rep(unlist(mx_pval), 2)
+		mx_summary <- as.data.frame(mx_summary)
+		mx_summary <- mx_summary[order(mx_summary$p, mx_summary$variable), ]
+		write.csv(mx_summary, paste0(mx_name, "-mean-by-y.csv"), row.names = FALSE)
+		summary_ids <- (1:(nrow(mx_summary) / 2)) * 2 - 1
+		mx_summary$mean[which(mx_summary$mean < 0)] <- 0
+		de_mean <- data.frame(p_val = mx_summary$p[summary_ids],
+													avg_log2FC = log2(mx_summary$mean[summary_ids + 1] / mx_summary$mean[summary_ids]),
+													pct.1 = mx_summary$mean[summary_ids + 1],
+													pct.2 = mx_summary$mean[summary_ids],
+													p_val_adj = mx_summary$p[summary_ids])
+		rownames(de_mean) <- mx_summary$variable[summary_ids]
+		de_mean <- rm_clono_features(mx, de_mean)
+		write.csv(de_mean, paste0(mx_name, "-mean-log2FC.csv"))
+		plot_de_result(mx, de_mean, paste0(mx_name, "-mean"), mx_assay, de_log2fc = 0.25, max_log2fc, de_seq = TRUE, p_adj = FALSE)
+	} else {
+		write.csv(mx_summary, paste0(mx_name, "-mean-by-y.csv"), row.names = FALSE)
+	}
+	if (mx_assay == "SCT") {
+		pct <- function(x) { sum(x > 0, na.rm = TRUE) / length(x) }
+		mx_pct <- mx_data %>% group_by(y, de_sample) %>% summarise_all(pct)
+		rm_genes <- colMeans(mx_pct[, -c(1:2)])
+		rm_genes <- which(rm_genes %in% c(0, 1))
+		if (length(rm_genes) > 0) mx_pct <- mx_pct[, -(rm_genes + 2)]
+		mx_summary <- mx_pct[, -2] %>% group_by(y) %>% get_summary_stats()
+		if (mx_summary$n[which(mx_summary$y == 1)][1] >= 3 && mx_summary$n[which(mx_summary$y == 2)][1] >= 3) {
+			mx_pval <- mx_pct[, -c(1:2)] %>% ungroup() %>% summarise_all(function(x) {
+				ifelse(sum(x) > 0.01, wilcox_test(data.frame(x, y = mx_pct$y), x ~ y)$p, 1) })
+			mx_summary$p <- rep(unlist(mx_pval), 2)
+			mx_summary <- as.data.frame(mx_summary)
+			mx_summary <- mx_summary[order(mx_summary$p, mx_summary$variable), ]
+			write.csv(mx_summary, paste0(mx_name, "-pct-by-y.csv"), row.names = FALSE)
+			summary_ids <- (1:(nrow(mx_summary) / 2)) * 2 - 1
+			de_pct <- data.frame(p_val = mx_summary$p[summary_ids],
+													 avg_log2FC = log2(mx_summary$mean[summary_ids + 1] / mx_summary$mean[summary_ids]),
+													 pct.1 = mx_summary$mean[summary_ids + 1],
+													 pct.2 = mx_summary$mean[summary_ids],
+													 p_val_adj = mx_summary$p[summary_ids])
+			rownames(de_pct) <- mx_summary$variable[summary_ids]
+			de_pct <- rm_clono_features(mx, de_pct)
+			write.csv(de_pct, paste0(mx_name, "-pct-log2FC.csv"))
+			plot_de_result(mx, de_pct, paste0(mx_name, "-pct"), mx_assay, de_log2fc = 0.25, max_log2fc, de_seq = TRUE, p_adj = FALSE)
+
+			## Perform DESeq2 analysis.
+			## Prepare data.
+			deseq_genes <- rownames(mx)
+			mx_data <- data.frame(y = mx$y, de_sample = mx$de_sample,
+														FetchData(mx, vars = deseq_genes, assay = "RNA", slot = "counts"))
+			mx_counts <- mx_data %>% group_by(y, de_sample) %>% summarise_all(sum, na.rm = TRUE)  # Simulate pseudo-bulk
+			mx_counts[, -c(1:2)] <- round(mx_counts[, -c(1:2)])
+			mx_counts$y <- factor(mx_counts$y)
+			mx_deseq <- t(as.matrix(mx_counts[, -c(1:2)]))
+			colnames(mx_deseq) <- paste0(mx_counts$y, "_", mx_counts$de_sample)
+			rownames(mx_deseq) <- rownames(mx)
+			rm_genes <- which(rowSums(mx_deseq) < 100)
+			mx_deseq <- mx_deseq[-rm_genes, ]
+			coldata <- mx_counts[, c(1:2)]
+			rownames(coldata) <- colnames(mx_deseq)
+
+			## Perform DESeq2 on pseudo-bulk data.
+			if (length(grep(pattern = "log2FC_y", mx_name)) > 0) {
+				dds <- try(DESeqDataSetFromMatrix(countData = mx_deseq,	colData = coldata, design = ~ de_sample + y), silent = TRUE)
+			} else {
+				dds <- try(DESeqDataSetFromMatrix(countData = mx_deseq,	colData = coldata, design = ~ 1 + y), silent = TRUE)
+			}
+			if (inherits(dds, "try-error")) return()
+			dds <- try(DESeq(dds), silent = TRUE)
+			if (inherits(dds, "try-error")) return()
+			# resultsNames(dds) # lists the coefficients
+			res <- results(dds, name = "y_2_vs_1")
+			res <- as.data.frame(res)
+			if (nrow(res) == 0) return()
+			res <- res[order(res$pvalue, res$log2FoldChange), ]
+			res <- res[res$baseMean != 0, ]
+			rm_ids <- get_clono_features(rownames(res))
+			if (length(rm_ids) > 0) res <- res[-rm_ids, ]
+			write.csv(res, file = paste0(mx_name, "-DESeq2-result.csv"))
+			## Plot DESeq2 results and run pathway analysis.
+			de_genes <- res
+			de_genes <- de_genes[, c("baseMean", "log2FoldChange", "pvalue", "padj")]
+			colnames(de_genes) <- c("base_mean", "avg_log2FC", "p_val", "p_val_adj")
+			plot_de_result(mx, de_genes, paste0(mx_name, "-DEseq"), mx_assay, de_log2fc = log2(1.25), max_log2fc, de_seq = TRUE, p_adj = TRUE)
+			plot_de_result(mx, de_genes, paste0(mx_name, "-DEseq"), mx_assay, de_log2fc = log2(1.25), max_log2fc, de_seq = TRUE, p_adj = FALSE)
+		} else {
+			write.csv(mx_summary, paste0(mx_name, "-pct-by-y.csv"), row.names = FALSE)
+		}
+		mx_mean <- cbind(mx_mean, mx_pct[, -c(1:2)])
+		colnames(mx_mean)[-c(1:2)] <- c(paste0(colnames(mx_pct)[-c(1:2)], "_mean"),
+																		paste0(colnames(mx_pct)[-c(1:2)], "_pct"))
+		write.csv(mx_mean, paste0(mx_name, "-mean_pct-by-sample.csv"), row.names = FALSE)
+	} else {
+		write.csv(mx_mean, paste0(mx_name, "-mean-by-sample.csv"), row.names = FALSE)
+	}
+}
+```
+
+
+
+
+```{r}
+# Define a function to perform differential expression analysis and pathway analysis.
+do_de <- function(mx, mx_name, mx_assay = "SCT", mx_genes, de_log2fc = log2(1.5), max_log2fc = 5) {
+	# 1. Select and annotate data.
+	Idents(mx) <- "y"
+
+	# 2. Create a directory for results.
+	cat("Running DE:", mx_name, "\n")
+	if (sum(mx$y == 1) < 5 || sum(mx$y == 2) < 5) {
+		cat("Not enough data for", mx_name, "\n")
+		return()
+	}
+	mx_name <- paste0(mx_name, "-", mx_assay)
+	dir.create(mx_name)
+	setwd(mx_name)
+
+	# 3. Do differential expression analysis controlling for patient ID.
+	cat(names(table(mx$y)), "\n")
+	cat(table(mx$y), "\n")
+	DefaultAssay(mx) <- mx_assay
+	## Default: wilcox, can do negbinom, MAST or DESeq
+	# de_genes <- FindConservedMarkers(object = mx, ident.1 = 2, ident.2 = 1, grouping.var = "patient_id",
+	# 																 assay = mx_assay, pseudocount.use = 1e-6, min.pct = 0.05)
+	# de_genes <- rm_clono_features(mx, de_genes)
+	# write.csv(de_genes, paste0(mx_name, "-DE_genes-cons_pt.csv"))
+	# plot_de_result(mx, de_genes, paste0(mx_name, "-cons_pt"), mx_assay, de_log2fc, max_log2fc, de_seq = FALSE, p_adj = TRUE)
+	# plot_de_result(mx, de_genes, paste0(mx_name, "-cons_pt"), mx_assay, de_log2fc, max_log2fc, de_seq = FALSE, p_adj = FALSE)
+	# de_genes_signif <- subset(de_genes, p_val_adj < 0.05 & (avg_log2FC > de_log2fc | avg_log2FC < -de_log2fc))
+
+	# 4. Do differential expression analysis.
+	if (mx_assay == "scenic") {
+		de_genes <- FindMarkers(object = mx, ident.1 = 2, ident.2 = 1,
+														assay = mx_assay, pseudocount.use = 1e-6, logfc.threshold = 0, min.pct = 0)
+	} else {
+		de_genes <- FindMarkers(object = mx, ident.1 = 2, ident.2 = 1,
+														assay = mx_assay, pseudocount.use = 1e-6, min.pct = 0.05)
+	}
+	de_genes <- rm_clono_features(mx, de_genes)
+	write.csv(de_genes, paste0(mx_name, "-DE_genes.csv"))
+	plot_de_result(mx, de_genes, mx_name, mx_assay, de_log2fc, max_log2fc, de_seq = FALSE, p_adj = TRUE)
+	plot_de_result(mx, de_genes, mx_name, mx_assay, de_log2fc, max_log2fc, de_seq = FALSE, p_adj = FALSE)
+	de_genes_signif <- subset(de_genes, p_val < 0.05)
+	# de_genes_signif <- subset(de_genes, p_val_adj < 0.05 & (avg_log2FC > de_log2fc | avg_log2FC < -de_log2fc))
+
+	# 5. Check expression across samples.
+	test_mean_pct(mx, de_genes_signif, mx_name, mx_assay, mx_sample = "patient_id", mx_genes, de_log2fc, max_log2fc)
+	#test_mean_pct(mx, de_genes_signif, mx_name, mx_assay, mx_sample = "trace_clonotype", mx_genes, de_log2fc, max_log2fc)
+
+	setwd("../")
+}
+```
+
+
+
+```{r}
+# Define a function to perform CNA analysis on a given data subset and a given graph.
+run_cna <- function(mx, mx_tag, y, mx_sample = "patient_id", mx_graph, pt_colors, mx_cov = NULL) {
+	mx_tag <- paste0(mx_tag, "-CNA-by-", mx_sample, "-", mx_graph, ifelse(!is.null(mx_cov), paste0("-by-", mx_cov), ""))
+
+	# 1. Perform CNA.
+	#if (mx_sample == "trace_clonotype" ) mx <- subset(mx, cells = which(!is.na(mx$trace_clonotype)))
+	if (!is.null(mx_cov)) {
+		mx@meta.data[, mx_cov] <- as.numeric(mx@meta.data[, mx_cov]) - 1.5
+		if (sum(mx@meta.data[, mx_cov] == 0.5) < 10 || sum(mx@meta.data[, mx_cov] == -0.5) < 10) return()
+	}
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 3) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	## Downsample unexpanded clones, fails otherwise.
+	mx_downsampled <- FALSE
+	if (mx_sample == "trace_clonotype" && ncol(mx) > 10000) {
+		if (y %in% c("construct", "log2FC_y")) {
+			mx_cells <- c()
+			for (pt in unique(mx$patient_id)) {
+				mx_pt_ids <- which(mx$y == 1 & mx$patient_id == pt)
+				mx_pt_cells <- sample(colnames(mx)[mx_pt_ids], size = min(500, length(mx_pt_ids)))
+				mx_cells <- c(mx_cells, mx_pt_cells)
+			}
+			mx_cells <- c(mx_cells, colnames(mx)[which(mx$y == 2)])
+			mx <- subset(mx, cells = mx_cells)
+		} else {
+			mx <- subset(mx, downsample = 500)
+		}
+		mx_downsampled <- TRUE
+		mx_tag <- paste0(mx_tag, "-downsampled")
+		mx <- add_nn_graphs(mx)
+	} else {
+		mx <- add_nn_graphs(mx)
+	}
+	mx@meta.data[, mx_sample] <- factor(mx@meta.data[, mx_sample])
+	mx <- try(association.Seurat(mx, test_var = 'y', samplem_key = mx_sample, graph_use = mx_graph, covs = mx_cov), silent = TRUE)
+	if (inherits(mx, "try-error")) return()
+	if (!("cna_ncorrs_fdr05" %in% colnames(mx@meta.data))) return()
+
+	# 2. Plot results.
+	dir.create("cna")
+	setwd("cna")
+	mx_500 <- subset(mx, downsample = 500)
+	for (mx_reduction in c("umap", "wnn.umap")) {
+		for (plot_limit in c(0.1, 0.2, 0.3, 0.5, 0.7)) {
+			## Correlation
+			FeaturePlot(mx_500, features = 'cna_ncorrs', reduction = mx_reduction) +
+				scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+				labs(title = paste('CNA:', y), color = 'Correlation', subtitle = sprintf('global p = %0.6f', mx@reductions$cna@misc$p))
+			ggsave(filename = paste0(mx_tag, "-Correlation-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			## FDR < 0.10
+			if (sum(mx_500$cna_ncorrs_fdr10 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr10', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.10', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR10-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			## FDR < 0.05
+			if (sum(mx_500$cna_ncorrs_fdr05 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr05', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.05', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+	rm(mx_500)
+
+	# 3. Perform DE on differentially abundant populations and write CNA results.
+	if (sum(mx$cna_ncorrs_fdr05 != 0) > 3) {
+		# mx <- subset(mx, cna_ncorrs_fdr05 != 0)
+		# do_de(mx, mx_tag, mx_assay = "SCT", mx_genes)
+		# do_de(mx, mx_tag, mx_assay = "ADT5", mx_genes)
+		cna_result <- mx@meta.data[, c("cna_ncorrs", "cna_ncorrs_fdr10", "cna_ncorrs_fdr05", "y", "patient_id")]
+		write.csv(cna_result, paste0(mx_tag, "-CNA_result.csv"))
+	}
+
+	setwd("../")
+}
+```
+
+
+
+################################ Inputs #################################
+```{r}
+# 1. Define study parameters.
+## Trial ID
+trial_id <- "CCT5001-CCT5019"
+## Colors
+trial_cols <- c("#eb8e23", "#3c0382")
+time_cols <- c("#05668d", "#e07a5f", "#81b29a", "#6a040f", "#dda15e", "#3d405b")
+time_cols_detail <- c("#5555CC", "#05668d", "#e07a5f", "#81b29a", "#6a040f", "#dda15e", "#CCCCCC", "#3d405b", "#999999", "#ba091b")
+pt_cols <- c("#AAAAEE", "#5555CC", "#0000CC", "#1D3398", "#f0b6d8", "#DE8AC9", "#CD68DA", "#912966", "#4a1333","#CCCCCC", "#999999", "#555555", "#000000", "#cfa174", "#94663a", "#7d4613", "#4a2808", "#8fc294", "#578c5c", "#248A3D", "#3F6634", "#07330d")  # CCT5001, CCT5019
+cell_cols <- c("#05668d", "#e07a5f", "#81b29a", "#dda15e", "#6a040f", "#3d405b", "#07330d", "#ba091b", "#248A3D", "#5555CC", "#A000C8", "#1AA7EC", "#777777", "#CCCCCC")
+## Genes of interest
+genes <- readLines("CIBERSORTx_Gene_Subset_File.txt")
+
+```
+
+
+################################ Inputs #################################
+```{r}
+# 2. Load data with clinical data in metadata.
+df <- readRDS("FNA/FNA_InteractomeAnalysis_2.rds")
+
+# df <- readRDS("FNA/CCT5001-CCT5019-C_FNA-28Sep2023.rds")
+
+
+# 3. Load human gene data for pathway analysis.
+#useEnsembl(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+#human <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+#human_ids <- getBM(attributes = c("hgnc_symbol", "entrezgene_id"), filters = "hgnc_symbol", values = rownames(mdc), mart = human)
+#write.csv(human_ids, "singleR-human_ids.csv", row.names = FALSE)
+human_ids <- read.csv("singleR-human_ids.csv", header = TRUE, stringsAsFactors = FALSE)
+
+# Myeloid DC
+# B cell
+# Tcon
+# Treg
+mdc <- subset(df, interactome_group == "Tcon")
+
+# Response_30d
+# Response_3m
+# Response_6m
+mdc$y <- NA
+mdc$y[mdc$Response_3m %in% c("CR", "PR")] <- 1
+mdc$y[mdc$Response_3m %in% c("SD", "PD")] <- 2
+
+
+unique(df@meta.data$cell_subset)
+```
+
+# CCT5001-CCT5019-T_cells-singleR (NOT USED)
+```{r}
+df <- readRDS("FNA/CCT5001-CCT5019-T_cells-singleR.rds")
+
+#mdc <- subset(df, cell_subset != "Treg")
+mdc <- subset(df, cell_subset != "Treg")
+
+mdc$y <- NA
+mdc$y[mdc$Response_3m %in% c("CR", "PR")] <- 1
+mdc$y[mdc$Response_3m %in% c("SD", "PD")] <- 2
+
+library(future)
+plan(multisession, workers = 2)
+do_de(mdc, "Tconv-TF", mx_assay = "scenic", mx_genes = t_genes)
+
+```
+
+
+
+```{r}
+# 5. Define T cell genes of interest.
+t_genes <- c("PDCD1", "LAG3", "CD101", "CD244", "BTLA", "HAVCR2", "ENTPD1", "NT5E", "ITGAE", "TNFRSF18", "VSIR",  # Exhaustion markers / inhibitory receptors
+						 # PDCD1 = PD1, CD244 = 2B4, BTLA = CD272, HAVCR2 = TIM3, ENTPD1 = CD39, NT5E = CD73, ITGAE = CD103, TNFRSF18 = CD357 (GITR)
+						 "TOX", "TOX2", "NR4A1", "NR4A2", "NR4A3", "ID3", "SOX4", "NFATC2",  # Exhaustion TFs
+						 "TBX21", "GATA3", "BCL6", "RORC", "MAF", "AHR",
+						 # Th subsets: Th1 (T-bet), Th2 (GATA3), Tfh (BCL6), Th17 (RORgt); MAF in Tfh and maybe others
+						 "SELL", "CCR7", "IL7R", "LTB", "IL2RB", "CXCR3",  # Naive/memory markers
+						 # SELL = CD62L, IL7R = IL7Ra, CXCR3 = CD183
+						 "LEF1", "TCF7", "KLF2", "P2RX7", "FOXO1",  # Naive/memory TFs
+						 "CD58", "CD2", "CD7", "CD27", "CD28", "TNFRSF4", "TNFRSF9", "TNFRSF14", "ICOS", "CD226", "TNFRSF8", "HAVCR1", "PVR", "CD40LG",  # Activating receptors
+						 # TNFRSF4 = CD134, TNFRSF9 = CD137, ICOS = CD278, TNFRSF14 = CD270 (HVEM; binds BTLA or CD160 - inhibitory and LIGHT - activating)
+						 # CD226 = DNAM1, PVR = CD155 (binds TIGIT - inhibitory and DNAM/CD226 - activating)
+						 # TNFRSF8 = CD30, HAVCR1 = CD365 (TIM1), VSIR = B7-H5 (VISTA), CD40LG = CD40L (CD154)
+						 "FAS", "GNLY", "GZMA", "GZMB", "GZMH", "GZMK", "LAMP1", "PRF1", "SRGN", "NKG7", "CST7", "CTSW", "CX3CR1",
+						 # Effector markers; GZMK in Tem; CX3CR1 marks good Teff in mice
+						 # FAS = CD95
+						 "EOMES", "TBX21", "PRDM1", "ZEB2", "HOPX", "FLI1", "BAFT", "IRF4", "ID2",  # Effector TFs
+						 # TBX21 = T-bet, PRDM1 = BLIMP1
+						 "IL2RA", "CD38", "CD44", "CD69",  # Activation markers
+						 "CTLA4", "TIGIT", "FOXP3", "IKZF2", "NRP1", "RTKN2", "ARG1", "TGFB1", "TGFB2", "TGFB3", "ADORA2A", "ADORA2B", "CCR4", "CCR6", "CCR8", "FCRL3",
+						 # Treg markers; ARG1 is generally suppressive; FCRL3 and TIGIT mark memory Helios+ Treg (Dhuban et al. J Immunol 2015)
+						 # NRP1 = CD304 (very suppressive Treg, nTreg), IKZF2 = Helios (nTreg)
+						 "IFNG", "IL2", "IL4", "IL5", "IL10", "IL13", "IL17A", "IL17F", "IL21", "TNF",  "CSF2", "CCL5", "CXCL10", "METRNL",  # Cytokines (Th1: IFNg and CSF2 = GM-SCF; Th2: IL4, IL5, IL13; Th17: IL17A, IL17F; Tfh: IL21)
+						 "B3GAT1", "KLRG1", "USP16", "GLB1", "CDKN1A", "CDKN2A",  # Senescence - CD57, KLRG1 (and low CD27, CD28); USP16 (Dorian), beta-galactosidase; P21 (CDKN1A) and P16 (CDKN2A)             "MKI67", "MYC", "MYCL", "MYCN",  # Proliferation - Ki-67, Myc
+						 "NCAM1", "FCGR3A", "KLRB1", "KLRC1", "KLRC2", "KLRC3", "KLRD1", "KIR2DL1", "KIR2DL3", "KIR2DL4", "KIR3DL1", "KIR3DL2", "KIR3DL3",  # NK markers
+						 "BATF", "BATF3", "IRF1", "IRF2", "IRF3", "IRF4", "IRF8", "JUND", "JUNB", "JUN", "FOS", "FOSB", "FOSL1", "FOSL2", "BACH1", "BACH2", "ATF1",  "ATF2", "ATF3", "ATF4", "ATF5", "ATF6", "ATF7",  # AP1 TFs
+						 "ZNF683",  # Cathy Wu TF
+						 "TERT", "TERC", "DKC1",  # Telomerase genes
+						 "MKI67",  # Proliferation - Ki-67,
+						 "CD47",
+						 "SLC2A1", "SLC2A2", "SLC2A3", "SLC2A4", "SLC2A5", "SLC2A14", "SLC1A5", "SLC38A1", "SLC38A2",
+						 # Metabolism: GLUT1, GLUT3, GLUT14 (GLUT3 paralog); also GLUT2/4/5 for completeness
+						 "TRAC", "TRBC1", "TRBC2", "TRGC1", "TRGC2", "TRDC",  # TCR gd vs. ab
+						 "CD3E", "CD3D", "CD3G", "CD247", "CD5", "CD4", "CD8A", "CD8B", "PTPRC", "CD52",  # T-cell markers, CD4 vs. CD8 subsets; PTPRC = CD45, CD247 = CD3z
+						 "HNRNPLL",  # regulates alternative splicing of CD45RO
+						 "CAR",  # axi-cel or bispecific CD19/22 CAR
+						 "CCL8", "CCL18", "ITGB2", "ENTPD", "NAMPT", "FPR2", "ICAM2", "CCL13", "LTB", "IL18")
+```
+
+
+
+
+
+
+############################# Process Data ##############################
+
+# 30d
+```{r}
+mx <- mdc
+mx_tag <- "Treg"
+y <- "Response_30d" # Response_30d, Resopnse_3m, Response_6m
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+
+
+mx_tag <- paste0(mx_tag, "-CNA-by-", mx_sample, "-", mx_graph, ifelse(!is.null(mx_cov), paste0("-by-", mx_cov), ""))
+
+	# 1. Perform CNA.
+	#if (mx_sample == "trace_clonotype" ) mx <- subset(mx, cells = which(!is.na(mx$trace_clonotype)))
+	if (!is.null(mx_cov)) {
+		mx@meta.data[, mx_cov] <- as.numeric(mx@meta.data[, mx_cov]) - 1.5
+		if (sum(mx@meta.data[, mx_cov] == 0.5) < 10 || sum(mx@meta.data[, mx_cov] == -0.5) < 10) return()
+	}
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 3) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	## Downsample unexpanded clones, fails otherwise.
+	mx_downsampled <- FALSE
+	if (mx_sample == "trace_clonotype" && ncol(mx) > 10000) {
+		if (y %in% c("construct", "log2FC_y")) {
+			mx_cells <- c()
+			for (pt in unique(mx$patient_id)) {
+				mx_pt_ids <- which(mx$y == 1 & mx$patient_id == pt)
+				mx_pt_cells <- sample(colnames(mx)[mx_pt_ids], size = min(500, length(mx_pt_ids)))
+				mx_cells <- c(mx_cells, mx_pt_cells)
+			}
+			mx_cells <- c(mx_cells, colnames(mx)[which(mx$y == 2)])
+			mx <- subset(mx, cells = mx_cells)
+		} else {
+			mx <- subset(mx, downsample = 500)
+		}
+		mx_downsampled <- TRUE
+		mx_tag <- paste0(mx_tag, "-downsampled")
+		mx <- add_nn_graphs(mx)
+	} else {
+		mx <- add_nn_graphs(mx)
+	}
+	mx@meta.data[, mx_sample] <- factor(mx@meta.data[, mx_sample])
+	mx <- try(association.Seurat(mx, test_var = 'y', samplem_key = mx_sample, graph_use = mx_graph, covs = mx_cov), silent = TRUE)
+	if (inherits(mx, "try-error")) return()
+	if (!("cna_ncorrs_fdr05" %in% colnames(mx@meta.data))) return()
+
+	# 2. Plot results.
+	dir.create("cna")
+	setwd("cna")
+	mx_500 <- subset(mx, downsample = 500)
+	for (mx_reduction in c("umap", "wnn.umap")) {
+		for (plot_limit in c(0.1, 0.2, 0.3, 0.5, 0.7)) {
+			## Correlation
+			FeaturePlot(mx_500, features = 'cna_ncorrs', reduction = mx_reduction) +
+				scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+				labs(title = paste('CNA:', y), color = 'Correlation', subtitle = sprintf('global p = %0.6f', mx@reductions$cna@misc$p))
+			ggsave(filename = paste0(mx_tag, "-Correlation-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			## FDR < 0.10
+			if (sum(mx_500$cna_ncorrs_fdr10 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr10', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.10', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR10-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			## FDR < 0.05
+			if (sum(mx_500$cna_ncorrs_fdr05 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr05', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.05', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+	rm(mx_500)
+
+	# 3. Perform DE on differentially abundant populations and write CNA results.
+	if (sum(mx$cna_ncorrs_fdr05 != 0) > 3) {
+		# mx <- subset(mx, cna_ncorrs_fdr05 != 0)
+		# do_de(mx, mx_tag, mx_assay = "SCT", mx_genes)
+		# do_de(mx, mx_tag, mx_assay = "ADT5", mx_genes)
+		cna_result <- mx@meta.data[, c("cna_ncorrs", "cna_ncorrs_fdr10", "cna_ncorrs_fdr05", "y", "patient_id")]
+		write.csv(cna_result, paste0(mx_tag, "-CNA_result.csv"))
+	}
+```
+
+
+
+```{r}
+library(future)
+plan(multisession, workers = 2)
+do_de(mdc, "DEG_Treg", mx_assay = "SCT", mx_genes =t_genes)
+```
+
+
+
+
+
+# 3m
+```{r}
+
+mdc$y <- NA
+mdc$y[mdc$Response_3m %in% c("CR", "PR")] <- 1
+mdc$y[mdc$Response_3m %in% c("SD", "PD")] <- 2
+```
+
+
+
+```{r}
+mx <- mdc
+mx_tag <- "MyeloidDC-3m"
+y <- "Response_3m" # Response_30d, Resopnse_3m, Response_6m
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+
+
+mx_tag <- paste0(mx_tag, "-CNA-by-", mx_sample, "-", mx_graph, ifelse(!is.null(mx_cov), paste0("-by-", mx_cov), ""))
+
+	# 1. Perform CNA.
+	#if (mx_sample == "trace_clonotype" ) mx <- subset(mx, cells = which(!is.na(mx$trace_clonotype)))
+	if (!is.null(mx_cov)) {
+		mx@meta.data[, mx_cov] <- as.numeric(mx@meta.data[, mx_cov]) - 1.5
+		if (sum(mx@meta.data[, mx_cov] == 0.5) < 10 || sum(mx@meta.data[, mx_cov] == -0.5) < 10) return()
+	}
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 3) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	## Downsample unexpanded clones, fails otherwise.
+	mx_downsampled <- FALSE
+	if (mx_sample == "trace_clonotype" && ncol(mx) > 10000) {
+		if (y %in% c("construct", "log2FC_y")) {
+			mx_cells <- c()
+			for (pt in unique(mx$patient_id)) {
+				mx_pt_ids <- which(mx$y == 1 & mx$patient_id == pt)
+				mx_pt_cells <- sample(colnames(mx)[mx_pt_ids], size = min(500, length(mx_pt_ids)))
+				mx_cells <- c(mx_cells, mx_pt_cells)
+			}
+			mx_cells <- c(mx_cells, colnames(mx)[which(mx$y == 2)])
+			mx <- subset(mx, cells = mx_cells)
+		} else {
+			mx <- subset(mx, downsample = 500)
+		}
+		mx_downsampled <- TRUE
+		mx_tag <- paste0(mx_tag, "-downsampled")
+		mx <- add_nn_graphs(mx)
+	} else {
+		mx <- add_nn_graphs(mx)
+	}
+	mx@meta.data[, mx_sample] <- factor(mx@meta.data[, mx_sample])
+	mx <- try(association.Seurat(mx, test_var = 'y', samplem_key = mx_sample, graph_use = mx_graph, covs = mx_cov), silent = TRUE)
+	if (inherits(mx, "try-error")) return()
+	if (!("cna_ncorrs_fdr05" %in% colnames(mx@meta.data))) return()
+
+	# 2. Plot results.
+	dir.create("cna")
+	setwd("cna")
+	mx_500 <- subset(mx, downsample = 500)
+	for (mx_reduction in c("umap", "wnn.umap")) {
+		for (plot_limit in c(0.1, 0.2, 0.3, 0.5, 0.7)) {
+			## Correlation
+			FeaturePlot(mx_500, features = 'cna_ncorrs', reduction = mx_reduction) +
+				scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+				labs(title = paste('CNA:', y), color = 'Correlation', subtitle = sprintf('global p = %0.6f', mx@reductions$cna@misc$p))
+			ggsave(filename = paste0(mx_tag, "-Correlation-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			## FDR < 0.10
+			if (sum(mx_500$cna_ncorrs_fdr10 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr10', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.10', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR10-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			## FDR < 0.05
+			if (sum(mx_500$cna_ncorrs_fdr05 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr05', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.05', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+	rm(mx_500)
+
+	# 3. Perform DE on differentially abundant populations and write CNA results.
+	if (sum(mx$cna_ncorrs_fdr05 != 0) > 3) {
+		# mx <- subset(mx, cna_ncorrs_fdr05 != 0)
+		# do_de(mx, mx_tag, mx_assay = "SCT", mx_genes)
+		# do_de(mx, mx_tag, mx_assay = "ADT5", mx_genes)
+		cna_result <- mx@meta.data[, c("cna_ncorrs", "cna_ncorrs_fdr10", "cna_ncorrs_fdr05", "y", "patient_id")]
+		write.csv(cna_result, paste0(mx_tag, "-CNA_result.csv"))
+	}
+```
+
+
+
+```{r}
+library(future)
+plan(multisession, workers = 2)
+do_de(mdc, "Tcon_3m", mx_assay = "scenic", mx_genes=t_genes)
+```
+
+
+
+
+
+
+
+
+# 6m
+```{r}
+
+mdc$y <- NA
+mdc$y[mdc$Response_6m %in% c("CR", "PR")] <- 1
+mdc$y[mdc$Response_6m %in% c("SD", "PD")] <- 2
+```
+
+
+
+```{r}
+mx <- mdc
+mx_tag <- "Treg"
+y <- "Response_6m" # Response_30d, Resopnse_3m, Response_6m
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+
+
+mx_tag <- paste0(mx_tag, "-CNA-by-", mx_sample, "-", mx_graph, ifelse(!is.null(mx_cov), paste0("-by-", mx_cov), ""))
+
+	# 1. Perform CNA.
+	#if (mx_sample == "trace_clonotype" ) mx <- subset(mx, cells = which(!is.na(mx$trace_clonotype)))
+	if (!is.null(mx_cov)) {
+		mx@meta.data[, mx_cov] <- as.numeric(mx@meta.data[, mx_cov]) - 1.5
+		if (sum(mx@meta.data[, mx_cov] == 0.5) < 10 || sum(mx@meta.data[, mx_cov] == -0.5) < 10) return()
+	}
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 3) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	## Downsample unexpanded clones, fails otherwise.
+	mx_downsampled <- FALSE
+	if (mx_sample == "trace_clonotype" && ncol(mx) > 10000) {
+		if (y %in% c("construct", "log2FC_y")) {
+			mx_cells <- c()
+			for (pt in unique(mx$patient_id)) {
+				mx_pt_ids <- which(mx$y == 1 & mx$patient_id == pt)
+				mx_pt_cells <- sample(colnames(mx)[mx_pt_ids], size = min(500, length(mx_pt_ids)))
+				mx_cells <- c(mx_cells, mx_pt_cells)
+			}
+			mx_cells <- c(mx_cells, colnames(mx)[which(mx$y == 2)])
+			mx <- subset(mx, cells = mx_cells)
+		} else {
+			mx <- subset(mx, downsample = 500)
+		}
+		mx_downsampled <- TRUE
+		mx_tag <- paste0(mx_tag, "-downsampled")
+		mx <- add_nn_graphs(mx)
+	} else {
+		mx <- add_nn_graphs(mx)
+	}
+	mx@meta.data[, mx_sample] <- factor(mx@meta.data[, mx_sample])
+	mx <- try(association.Seurat(mx, test_var = 'y', samplem_key = mx_sample, graph_use = mx_graph, covs = mx_cov), silent = TRUE)
+	if (inherits(mx, "try-error")) return()
+	if (!("cna_ncorrs_fdr05" %in% colnames(mx@meta.data))) return()
+
+	# 2. Plot results.
+	dir.create("cna")
+	setwd("cna")
+	mx_500 <- subset(mx, downsample = 500)
+	for (mx_reduction in c("umap", "wnn.umap")) {
+		for (plot_limit in c(0.1, 0.2, 0.3, 0.5, 0.7)) {
+			## Correlation
+			FeaturePlot(mx_500, features = 'cna_ncorrs', reduction = mx_reduction) +
+				scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+				labs(title = paste('CNA:', y), color = 'Correlation', subtitle = sprintf('global p = %0.6f', mx@reductions$cna@misc$p))
+			ggsave(filename = paste0(mx_tag, "-Correlation-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			## FDR < 0.10
+			if (sum(mx_500$cna_ncorrs_fdr10 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr10', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.10', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR10-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			## FDR < 0.05
+			if (sum(mx_500$cna_ncorrs_fdr05 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr05', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.05', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+	rm(mx_500)
+
+	# 3. Perform DE on differentially abundant populations and write CNA results.
+	if (sum(mx$cna_ncorrs_fdr05 != 0) > 3) {
+		# mx <- subset(mx, cna_ncorrs_fdr05 != 0)
+		# do_de(mx, mx_tag, mx_assay = "SCT", mx_genes)
+		# do_de(mx, mx_tag, mx_assay = "ADT5", mx_genes)
+		cna_result <- mx@meta.data[, c("cna_ncorrs", "cna_ncorrs_fdr10", "cna_ncorrs_fdr05", "y", "patient_id")]
+		write.csv(cna_result, paste0(mx_tag, "-CNA_result.csv"))
+	}
+```
+
+
+
+```{r}
+library(future)
+plan(multisession, workers = 2)
+do_de(mdc, "DEG_Treg", mx_assay = "SCT", mx_genes =t_genes)
+```
+
+
+
+
+######################### Gene Specific DEG ###################################
+
+## CCL18
+```{r}
+# 2. Load data with clinical data in metadata.
+df <- readRDS("FNA_InteractomeAnalysis_2.rds")
+
+human_ids <- read.csv("singleR-human_ids.csv", header = TRUE, stringsAsFactors = FALSE)
+
+mdc <- subset(df, interactome_group == "Myeloid DC")
+
+mdc$y <- NA
+# 1 = CCL18-, 2 = CCL18+
+mdc$y <- ifelse(mdc@assays$RNA@counts["CCL18", ] > 0, 2, 1)
+
+table(mdc$y)
+```
+
+```{r}
+mx_tag <- "CCL18"
+y <- "y" 
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+run_cna(mdc, mx_tag, y, mx_sample = "patient_id", mx_graph, pt_colors, mx_cov = NULL)
+```
+
+```{r}
+#library(future)
+#plan(multisession, workers = 8)
+#do_de(mdc, "DEG_CCL18", mx_assay = "SCT", mx_genes = genes)
+
+
+
+
+# reading in data from deseq2
+df = read.csv("DEG_FNA/CCL18/DEG_CCL18-SCT-DE_genes.csv", header=TRUE) 
+
+# we want the log2 fold change 
+original_gene_list <- df$avg_log2FC
+
+# name the vector
+names(original_gene_list) <- df$X
+
+# omit any NA values 
+gene_list<-na.omit(original_gene_list)
+
+# sort the list in decreasing order (required for clusterProfiler)
+de_genes <- sort(gene_list, decreasing = TRUE)
+
+de_genes_up <- de_genes > 0
+
+de_ids_up <- human_ids[which(human_ids$hgnc_symbol %in% names(de_genes)), ]
+
+de_pathway <- enrichPathway(gene = de_ids$entrezgene_id, organism = "human", pvalueCutoff = 0.05, readable = TRUE)
+
+
+de_pathway@result
+```
+
+
+```{r}
+de_genes
+```
+
+
+## CCL8 - Myeloid DC
+```{r}
+mdc <- subset(df, interactome_group == "Myeloid DC")
+
+mdc$y <- NA
+# 1 = CCL8-, 2 = CCL8+
+mdc$y <- ifelse(mdc@assays$RNA@counts["CCL8", ] > 0, 2, 1)
+```
+
+```{r}
+mx_tag <- "CCL8"
+y <- "y" 
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+run_cna(mdc, mx_tag, y, mx_sample = "patient_id", mx_graph, pt_colors, mx_cov = NULL)
+```
+
+```{r}
+do_de(mdc, "DEG_CCL8", mx_assay = "SCT", mx_genes = genes)
+```
+
+
+
+
+## ITGB2 - B cell
+```{r}
+mdc <- subset(df, interactome_group == "B cell")
+
+mdc$y <- NA
+# 1 = ITGB2-, 2 = ITGB2+
+mdc$y <- ifelse(mdc@assays$RNA@counts["ITGB2", ] > 0, 2, 1)
+```
+
+```{r}
+mx_tag <- "ITGB2"
+y <- "y" 
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+run_cna(mdc, mx_tag, y, mx_sample = "patient_id", mx_graph, pt_colors, mx_cov = NULL)
+```
+
+```{r}
+do_de(mdc, "DEG_ITGB2", mx_assay = "SCT", mx_genes = genes)
+```
+
+
+
+
+
+## CCL13 - Myeloid DC
+```{r}
+mdc <- subset(df, interactome_group == "Myeloid DC")
+
+mdc$y <- NA
+# 1 = CCL13-, 2 = CCL13+
+mdc$y <- ifelse(mdc@assays$RNA@counts["CCL13", ] > 0, 2, 1)
+```
+
+```{r}
+mx_tag <- "CCL13"
+y <- "y" 
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+run_cna(mdc, mx_tag, y, mx_sample = "patient_id", mx_graph, pt_colors, mx_cov = NULL)
+```
+
+```{r}
+do_de(mdc, "DEG_CCL13", mx_assay = "SCT", mx_genes = genes)
+
+```
+
+
+
+######################### FNA scRNAseq Dataset ####################################
+## 30d, 3m, 6m
+```{r}
+# 2. Load data with clinical data in metadata.
+df <- readRDS("FNA_InteractomeAnalysis_2.rds")
+
+human_ids <- read.csv("singleR-human_ids.csv", header = TRUE, stringsAsFactors = FALSE)
+
+mdc <- df
+
+mdc$y <- NA
+mdc$y[mdc$Response_30d %in% c("CR", "PR")] <- 1
+mdc$y[mdc$Response_30d %in% c("SD", "PD")] <- 2
+
+count(mdc$Response_30d == "CR")
+count(mdc$Response_30d == "PR")
+count(mdc$Response_30d == "SD")
+count(mdc$Response_30d == "PD")
+```
+
+
+```{r}
+mx <- mdc
+mx_tag <- "FNA"
+y <- "Response_30d" # Response_30d, Resopnse_3m, Response_6m
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+
+
+mx_tag <- paste0(mx_tag, "-CNA-by-", mx_sample, "-", mx_graph, ifelse(!is.null(mx_cov), paste0("-by-", mx_cov), ""))
+
+	# 1. Perform CNA.
+	#if (mx_sample == "trace_clonotype" ) mx <- subset(mx, cells = which(!is.na(mx$trace_clonotype)))
+	if (!is.null(mx_cov)) {
+		mx@meta.data[, mx_cov] <- as.numeric(mx@meta.data[, mx_cov]) - 1.5
+		if (sum(mx@meta.data[, mx_cov] == 0.5) < 10 || sum(mx@meta.data[, mx_cov] == -0.5) < 10) return()
+	}
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 3) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	## Downsample unexpanded clones, fails otherwise.
+	mx_downsampled <- FALSE
+	if (mx_sample == "trace_clonotype" && ncol(mx) > 10000) {
+		if (y %in% c("construct", "log2FC_y")) {
+			mx_cells <- c()
+			for (pt in unique(mx$patient_id)) {
+				mx_pt_ids <- which(mx$y == 1 & mx$patient_id == pt)
+				mx_pt_cells <- sample(colnames(mx)[mx_pt_ids], size = min(500, length(mx_pt_ids)))
+				mx_cells <- c(mx_cells, mx_pt_cells)
+			}
+			mx_cells <- c(mx_cells, colnames(mx)[which(mx$y == 2)])
+			mx <- subset(mx, cells = mx_cells)
+		} else {
+			mx <- subset(mx, downsample = 500)
+		}
+		mx_downsampled <- TRUE
+		mx_tag <- paste0(mx_tag, "-downsampled")
+		mx <- add_nn_graphs(mx)
+	} else {
+		mx <- add_nn_graphs(mx)
+	}
+	mx@meta.data[, mx_sample] <- factor(mx@meta.data[, mx_sample])
+	mx <- try(association.Seurat(mx, test_var = 'y', samplem_key = mx_sample, graph_use = mx_graph, covs = mx_cov), silent = TRUE)
+	if (inherits(mx, "try-error")) return()
+	if (!("cna_ncorrs_fdr05" %in% colnames(mx@meta.data))) return()
+
+	# 2. Plot results.
+	dir.create("cna")
+	setwd("cna")
+	mx_500 <- subset(mx, downsample = 500)
+	for (mx_reduction in c("umap", "wnn.umap")) {
+		for (plot_limit in c(0.1, 0.2, 0.3, 0.5, 0.7)) {
+			## Correlation
+			FeaturePlot(mx_500, features = 'cna_ncorrs', reduction = mx_reduction) +
+				scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+				labs(title = paste('CNA:', y), color = 'Correlation', subtitle = sprintf('global p = %0.6f', mx@reductions$cna@misc$p))
+			ggsave(filename = paste0(mx_tag, "-Correlation-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			## FDR < 0.10
+			if (sum(mx_500$cna_ncorrs_fdr10 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr10', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.10', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR10-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			## FDR < 0.05
+			if (sum(mx_500$cna_ncorrs_fdr05 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr05', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.05', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+	rm(mx_500)
+
+	# 3. Perform DE on differentially abundant populations and write CNA results.
+	if (sum(mx$cna_ncorrs_fdr05 != 0) > 3) {
+		# mx <- subset(mx, cna_ncorrs_fdr05 != 0)
+		# do_de(mx, mx_tag, mx_assay = "SCT", mx_genes)
+		# do_de(mx, mx_tag, mx_assay = "ADT5", mx_genes)
+		cna_result <- mx@meta.data[, c("cna_ncorrs", "cna_ncorrs_fdr10", "cna_ncorrs_fdr05", "y", "patient_id")]
+		write.csv(cna_result, paste0(mx_tag, "-CNA_result.csv"))
+	}
+```
+
+
+
+```{r}
+#library(future)
+#plan(multisession, workers = 2)
+do_de(mdc, "FNA", mx_assay = "SCT", mx_genes =genes)
+```
+
+
+## 3m
+```{r}
+# 2. Load data with clinical data in metadata.
+df <- readRDS("FNA_InteractomeAnalysis_2.rds")
+
+human_ids <- read.csv("singleR-human_ids.csv", header = TRUE, stringsAsFactors = FALSE)
+
+mdc <- df
+
+mdc$y <- NA
+mdc$y[mdc$Response_3m %in% c("CR", "PR")] <- 1
+mdc$y[mdc$Response_3m %in% c("SD", "PD")] <- 2
+
+count(mdc$Response_3m == "CR")
+count(mdc$Response_3m == "PR")
+count(mdc$Response_3m == "SD")
+count(mdc$Response_3m == "PD")
+```
+
+
+```{r}
+mx <- mdc
+mx_tag <- "FNA"
+y <- "Response_3m" # Response_30d, Resopnse_3m, Response_6m
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+
+
+mx_tag <- paste0(mx_tag, "-CNA-by-", mx_sample, "-", mx_graph, ifelse(!is.null(mx_cov), paste0("-by-", mx_cov), ""))
+
+	# 1. Perform CNA.
+	#if (mx_sample == "trace_clonotype" ) mx <- subset(mx, cells = which(!is.na(mx$trace_clonotype)))
+	if (!is.null(mx_cov)) {
+		mx@meta.data[, mx_cov] <- as.numeric(mx@meta.data[, mx_cov]) - 1.5
+		if (sum(mx@meta.data[, mx_cov] == 0.5) < 10 || sum(mx@meta.data[, mx_cov] == -0.5) < 10) return()
+	}
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 3) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	## Downsample unexpanded clones, fails otherwise.
+	mx_downsampled <- FALSE
+	if (mx_sample == "trace_clonotype" && ncol(mx) > 10000) {
+		if (y %in% c("construct", "log2FC_y")) {
+			mx_cells <- c()
+			for (pt in unique(mx$patient_id)) {
+				mx_pt_ids <- which(mx$y == 1 & mx$patient_id == pt)
+				mx_pt_cells <- sample(colnames(mx)[mx_pt_ids], size = min(500, length(mx_pt_ids)))
+				mx_cells <- c(mx_cells, mx_pt_cells)
+			}
+			mx_cells <- c(mx_cells, colnames(mx)[which(mx$y == 2)])
+			mx <- subset(mx, cells = mx_cells)
+		} else {
+			mx <- subset(mx, downsample = 500)
+		}
+		mx_downsampled <- TRUE
+		mx_tag <- paste0(mx_tag, "-downsampled")
+		mx <- add_nn_graphs(mx)
+	} else {
+		mx <- add_nn_graphs(mx)
+	}
+	mx@meta.data[, mx_sample] <- factor(mx@meta.data[, mx_sample])
+	mx <- try(association.Seurat(mx, test_var = 'y', samplem_key = mx_sample, graph_use = mx_graph, covs = mx_cov), silent = TRUE)
+	if (inherits(mx, "try-error")) return()
+	if (!("cna_ncorrs_fdr05" %in% colnames(mx@meta.data))) return()
+
+	# 2. Plot results.
+	dir.create("cna")
+	setwd("cna")
+	mx_500 <- subset(mx, downsample = 500)
+	for (mx_reduction in c("umap", "wnn.umap")) {
+		for (plot_limit in c(0.1, 0.2, 0.3, 0.5, 0.7)) {
+			## Correlation
+			FeaturePlot(mx_500, features = 'cna_ncorrs', reduction = mx_reduction) +
+				scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+				labs(title = paste('CNA:', y), color = 'Correlation', subtitle = sprintf('global p = %0.6f', mx@reductions$cna@misc$p))
+			ggsave(filename = paste0(mx_tag, "-Correlation-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			## FDR < 0.10
+			if (sum(mx_500$cna_ncorrs_fdr10 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr10', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.10', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR10-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			## FDR < 0.05
+			if (sum(mx_500$cna_ncorrs_fdr05 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr05', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.05', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+	rm(mx_500)
+
+	# 3. Perform DE on differentially abundant populations and write CNA results.
+	if (sum(mx$cna_ncorrs_fdr05 != 0) > 3) {
+		# mx <- subset(mx, cna_ncorrs_fdr05 != 0)
+		# do_de(mx, mx_tag, mx_assay = "SCT", mx_genes)
+		# do_de(mx, mx_tag, mx_assay = "ADT5", mx_genes)
+		cna_result <- mx@meta.data[, c("cna_ncorrs", "cna_ncorrs_fdr10", "cna_ncorrs_fdr05", "y", "patient_id")]
+		write.csv(cna_result, paste0(mx_tag, "-CNA_result.csv"))
+	}
+```
+
+
+
+```{r}
+#library(future)
+#plan(multisession, workers = 2)
+do_de(mdc, "FNA", mx_assay = "SCT", mx_genes =genes)
+```
+
+
+
+
+
+## 6m
+```{r}
+# 2. Load data with clinical data in metadata.
+df <- readRDS("FNA_InteractomeAnalysis_2.rds")
+
+human_ids <- read.csv("singleR-human_ids.csv", header = TRUE, stringsAsFactors = FALSE)
+
+mdc <- df
+
+mdc$y <- NA
+mdc$y[mdc$Response_3m %in% c("CR", "PR")] <- 1
+mdc$y[mdc$Response_3m %in% c("SD", "PD")] <- 2
+
+count(mdc$Response_3m == "CR")
+count(mdc$Response_3m == "PR")
+count(mdc$Response_3m == "SD")
+count(mdc$Response_3m == "PD")
+```
+
+
+```{r}
+mx <- mdc
+mx_tag <- "FNA"
+y <- "Response_6m" # Response_30d, Resopnse_3m, Response_6m
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+
+
+mx_tag <- paste0(mx_tag, "-CNA-by-", mx_sample, "-", mx_graph, ifelse(!is.null(mx_cov), paste0("-by-", mx_cov), ""))
+
+	# 1. Perform CNA.
+	#if (mx_sample == "trace_clonotype" ) mx <- subset(mx, cells = which(!is.na(mx$trace_clonotype)))
+	if (!is.null(mx_cov)) {
+		mx@meta.data[, mx_cov] <- as.numeric(mx@meta.data[, mx_cov]) - 1.5
+		if (sum(mx@meta.data[, mx_cov] == 0.5) < 10 || sum(mx@meta.data[, mx_cov] == -0.5) < 10) return()
+	}
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 3) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	## Downsample unexpanded clones, fails otherwise.
+	mx_downsampled <- FALSE
+	if (mx_sample == "trace_clonotype" && ncol(mx) > 10000) {
+		if (y %in% c("construct", "log2FC_y")) {
+			mx_cells <- c()
+			for (pt in unique(mx$patient_id)) {
+				mx_pt_ids <- which(mx$y == 1 & mx$patient_id == pt)
+				mx_pt_cells <- sample(colnames(mx)[mx_pt_ids], size = min(500, length(mx_pt_ids)))
+				mx_cells <- c(mx_cells, mx_pt_cells)
+			}
+			mx_cells <- c(mx_cells, colnames(mx)[which(mx$y == 2)])
+			mx <- subset(mx, cells = mx_cells)
+		} else {
+			mx <- subset(mx, downsample = 500)
+		}
+		mx_downsampled <- TRUE
+		mx_tag <- paste0(mx_tag, "-downsampled")
+		mx <- add_nn_graphs(mx)
+	} else {
+		mx <- add_nn_graphs(mx)
+	}
+	mx@meta.data[, mx_sample] <- factor(mx@meta.data[, mx_sample])
+	mx <- try(association.Seurat(mx, test_var = 'y', samplem_key = mx_sample, graph_use = mx_graph, covs = mx_cov), silent = TRUE)
+	if (inherits(mx, "try-error")) return()
+	if (!("cna_ncorrs_fdr05" %in% colnames(mx@meta.data))) return()
+
+	# 2. Plot results.
+	dir.create("cna")
+	setwd("cna")
+	mx_500 <- subset(mx, downsample = 500)
+	for (mx_reduction in c("umap", "wnn.umap")) {
+		for (plot_limit in c(0.1, 0.2, 0.3, 0.5, 0.7)) {
+			## Correlation
+			FeaturePlot(mx_500, features = 'cna_ncorrs', reduction = mx_reduction) +
+				scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+				labs(title = paste('CNA:', y), color = 'Correlation', subtitle = sprintf('global p = %0.6f', mx@reductions$cna@misc$p))
+			ggsave(filename = paste0(mx_tag, "-Correlation-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			## FDR < 0.10
+			if (sum(mx_500$cna_ncorrs_fdr10 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr10', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.10', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR10-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			## FDR < 0.05
+			if (sum(mx_500$cna_ncorrs_fdr05 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr05', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.05', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+	rm(mx_500)
+
+	# 3. Perform DE on differentially abundant populations and write CNA results.
+	if (sum(mx$cna_ncorrs_fdr05 != 0) > 3) {
+		# mx <- subset(mx, cna_ncorrs_fdr05 != 0)
+		# do_de(mx, mx_tag, mx_assay = "SCT", mx_genes)
+		# do_de(mx, mx_tag, mx_assay = "ADT5", mx_genes)
+		cna_result <- mx@meta.data[, c("cna_ncorrs", "cna_ncorrs_fdr10", "cna_ncorrs_fdr05", "y", "patient_id")]
+		write.csv(cna_result, paste0(mx_tag, "-CNA_result.csv"))
+	}
+```
+
+
+
+```{r}
+#library(future)
+#plan(multisession, workers = 2)
+do_de(mdc, "FNA", mx_assay = "SCT", mx_genes =genes)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+###################### CCL8+CCL13+ Combined ###############################
+#CCL8+ AND CCL13+
+```{r}
+mdc <- subset(df, interactome_group == "Myeloid DC")
+
+mdc$y <- NA
+# 1 = CCL13-, 2 = CCL8+CCL13+
+mdc$y <- ifelse((mdc@assays$RNA@counts["CCL13", ] > 0 & mdc@assays$RNA@counts["CCL8", ] > 0), 2, 1)
+
+table(mdc$y)
+
+#      CCL8+CCL13+       Other
+#               39        2178
+
+count(mdc@assays$RNA@counts["CCL8", ] > 0)
+# CCL13 > 0     CCL8 > 0
+#.       92          160
+```
+
+
+
+```{r}
+mx_tag <- "CCL8-AND-CCL13"
+y <- "y" 
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+run_cna(mdc, mx_tag, y, mx_sample = "patient_id", mx_graph, pt_colors, mx_cov = NULL)
+
+###############
+
+mx <- mdc
+
+mx_tag <- paste0(mx_tag, "-CNA-by-", mx_sample, "-", mx_graph, ifelse(!is.null(mx_cov), paste0("-by-", mx_cov), ""))
+
+	# 1. Perform CNA.
+	#if (mx_sample == "trace_clonotype" ) mx <- subset(mx, cells = which(!is.na(mx$trace_clonotype)))
+	if (!is.null(mx_cov)) {
+		mx@meta.data[, mx_cov] <- as.numeric(mx@meta.data[, mx_cov]) - 1.5
+		if (sum(mx@meta.data[, mx_cov] == 0.5) < 10 || sum(mx@meta.data[, mx_cov] == -0.5) < 10) return()
+	}
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 2) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	## Downsample unexpanded clones, fails otherwise.
+	mx_downsampled <- FALSE
+	if (mx_sample == "trace_clonotype" && ncol(mx) > 10000) {
+		if (y %in% c("construct", "log2FC_y")) {
+			mx_cells <- c()
+			for (pt in unique(mx$patient_id)) {
+				mx_pt_ids <- which(mx$y == 1 & mx$patient_id == pt)
+				mx_pt_cells <- sample(colnames(mx)[mx_pt_ids], size = min(500, length(mx_pt_ids)))
+				mx_cells <- c(mx_cells, mx_pt_cells)
+			}
+			mx_cells <- c(mx_cells, colnames(mx)[which(mx$y == 2)])
+			mx <- subset(mx, cells = mx_cells)
+		} else {
+			mx <- subset(mx, downsample = 500)
+		}
+		mx_downsampled <- TRUE
+		mx_tag <- paste0(mx_tag, "-downsampled")
+		mx <- add_nn_graphs(mx)
+	} else {
+		mx <- add_nn_graphs(mx)
+	}
+	mx@meta.data[, mx_sample] <- factor(mx@meta.data[, mx_sample])
+	mx <- try(association.Seurat(mx, test_var = 'y', samplem_key = mx_sample, graph_use = mx_graph, covs = mx_cov), silent = TRUE)
+	if (inherits(mx, "try-error")) return()
+	if (!("cna_ncorrs_fdr05" %in% colnames(mx@meta.data))) return()
+
+	# 2. Plot results.
+	dir.create("cna")
+	setwd("cna")
+	mx_500 <- subset(mx, downsample = 500)
+	for (mx_reduction in c("umap", "wnn.umap")) {
+		for (plot_limit in c(0.1, 0.2, 0.3, 0.5, 0.7)) {
+			## Correlation
+			FeaturePlot(mx_500, features = 'cna_ncorrs', reduction = mx_reduction) +
+				scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+				labs(title = paste('CNA:', y), color = 'Correlation', subtitle = sprintf('global p = %0.6f', mx@reductions$cna@misc$p))
+			ggsave(filename = paste0(mx_tag, "-Correlation-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			## FDR < 0.10
+			if (sum(mx_500$cna_ncorrs_fdr10 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr10', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.10', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR10-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			## FDR < 0.05
+			if (sum(mx_500$cna_ncorrs_fdr05 != 0) > 10) {
+				FeaturePlot(mx_500, features = 'cna_ncorrs_fdr05', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('CNA:', y), subtitle = 'FDR < 0.05', color = 'Correlation')
+				ggsave(filename = paste0(mx_tag, "-FDR05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+	rm(mx_500)
+
+	# 3. Perform DE on differentially abundant populations and write CNA results.
+	if (sum(mx$cna_ncorrs_fdr05 != 0) > 3) {
+		# mx <- subset(mx, cna_ncorrs_fdr05 != 0)
+		# do_de(mx, mx_tag, mx_assay = "SCT", mx_genes)
+		# do_de(mx, mx_tag, mx_assay = "ADT5", mx_genes)
+		cna_result <- mx@meta.data[, c("cna_ncorrs", "cna_ncorrs_fdr10", "cna_ncorrs_fdr05", "y", "patient_id")]
+		write.csv(cna_result, paste0(mx_tag, "-CNA_result.csv"))
+	}
+
+	setwd("../")
+```
+
+```{r}
+do_de(mdc, "CCL8-AND-CCL13", mx_assay = "SCT", mx_genes = genes)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+#CCL8+ OR CCL13+
+```{r}
+mdc <- subset(df, interactome_group == "Myeloid DC")
+
+mdc$y <- NA
+# 1 = CCL13-, 2 = CCL8+ or CCL13+
+mdc$y <- ifelse((mdc@assays$RNA@counts["CCL13", ] > 0 | mdc@assays$RNA@counts["CCL8", ] > 0), 2, 1)
+
+table(mdc$y)
+
+#      CCL8+ | CCL13+       Other
+#                 213        2004
+
+```
+
+```{r}
+mx_tag <- "CCL8-OR-CCL13"
+y <- "y" 
+mx_sample <- "patient_id"
+mx_graph <- "SCT_nn"
+patient_colors <- pt_cols
+mx_cov <- NULL
+
+run_cna(mdc, mx_tag, y, mx_sample = "patient_id", mx_graph, pt_colors, mx_cov = NULL)
+
+```
+
+```{r}
+do_de(mdc, "CCL8-OR-CCL13", mx_assay = "SCT", mx_genes = genes)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+FeaturePlot(df, features = "CCR10", reduction = "wnn.umap", cols = c("#bdbdbd", "dark red"))
+```
+
+```{r}
+avg_expression <- AverageExpression(df, features = "CCR10", group.by = "Response_3m")
+avg_expression
+```
+
+```{r}
+df@meta.data$CCR10 <- df@assays$RNA@data['CCR10', ]
+ggplot(df@meta.data, aes(x = Response_3m, y = CCR10)) +
+  geom_boxplot() +
+  labs(x = "Response at 3 months", y = "CCR10 expression")
+```
+```{r}
+
+ccr10_expression <- FetchData(df, vars = "CCR10")
+
+# Count the number of cells with non-zero CCR10 expression
+ccr10_expressing_cells <- sum(ccr10_expression$CCR10 > 0)
+ccr10_expressing_cells
+```
+
+```{r}
+DefaultAssay(df) <- "RNA"
+ccr10_expression_count <- FetchData(df, vars = "CCR10", slot = "count")
+df@meta.data$CCR10 <- ccr10_expression_count$CCR10
+ccr10 <- subset(df@meta.data, subset = CCR10 > 0)
+table(ccr10$interactome_group)
+```
+
+```{r}
+df@meta.data$Response_30d[which(df@meta.data$Response_30d == "CR")] <- "OR"
+df@meta.data$Response_30d[which(df@meta.data$Response_30d == "PR")] <- "OR"
+df@meta.data$Response_30d[which(df@meta.data$Response_30d == "SD")] <- "NR"
+df@meta.data$Response_30d[which(df@meta.data$Response_30d == "PD")] <- "NR"
+
+df$PPARG_expression <- df@assays$SCT@counts["PPARG", ]
+
+# T cells only OPTIONAL
+subset <- subset(df, subset = construct == "Bispecific CD19/22") # Bispecific CD19/22, Axi-cel
+subset <- subset(subset, subset = cd4_cd8 == "CD8 T cell")
+
+colors <- c("OR" = "blue", "NR" = "red")
+labels <- c("OR (n=4)", "NR (n=3)")
+
+summary_df <- subset@meta.data %>%  # df OR subset
+  group_by(patient_id, Response_30d) %>%
+  summarise(mean_PPARG_expression = mean(PPARG_expression) * 1000) %>%
+  ungroup()
+
+summary_df$Response_30d <- factor(summary_df$Response_30d, levels = c("OR", "NR"))
+
+wilcox_test_result <- wilcox.test(mean_PPARG_expression ~ Response_30d, data = summary_df)
+print(wilcox_test_result)
+
+p1 <- ggplot(summary_df, aes(x = Response_30d, y = mean_PPARG_expression, fill = Response_30d)) +  
+  geom_boxplot() +
+  geom_jitter(width = 0.3, size = 1, alpha = 1.2) +
+  scale_fill_manual(values = colors, labels = labels) +    #, labels = new_labels
+  labs(x = "Response",
+       y = "Mean PPARG expr (counts per 1,000 cells)",
+       fill = "Response") +
+  theme_minimal() + 
+  theme(
+    panel.background = element_rect(fill = "white", colour = "black", size = 0.5),
+    panel.border = element_rect(colour = "black", fill = NA, size = 0.5),
+    axis.title = element_text(size = 14, face = "bold"),
+    axis.text = element_text(size = 12),
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    legend.title = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 12)
+  )
+
+print(p1)
+
+ggsave(filename = paste0("PPARG-CD1922-allcells-Boxplot-FNA", ".eps"), p1, width = 3, height = 2.5)
+```
+
+```{r}
+num_rows <- sum(subset@meta.data$PPARG_expression > 0)
+num_rows
+
+summary_df
+
+```
+
+
+
+```{r}
+FeaturePlot(df, features = "PPARG", reduction = "wnn.umap", cols = c("#bdbdbd", "dark green"))
+```
+

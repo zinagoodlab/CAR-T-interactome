@@ -1,0 +1,363 @@
+---
+title: "CCL8-AND-CCL13_GSEA"
+author: "Kelvin Mo"
+date: "2024-05-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(BiocManager)
+BiocManager::install("clusterProfiler")
+BiocManager::install("pathview")
+BiocManager::install("enrichplot")
+library(clusterProfiler)
+library(enrichplot)
+# we use ggplot2 to add x axis labels (ex: ridgeplot)
+library(ggplot2)
+
+options(enrichplot.colours = c("red","blue"))
+```
+
+```{r}
+# Human annotation
+organism = "org.Hs.eg.db"
+BiocManager::install(organism, character.only = TRUE)
+library(organism, character.only = TRUE)
+```
+
+## FNA
+```{r}
+# reading in data from deseq2
+df = read.csv("DGE/fna/CCL8-AND-CCL13-SCT-DE_genes.csv", header=TRUE)
+
+# we want the log2 fold change 
+original_gene_list <- df$avg_log2FC
+
+# name the vector
+names(original_gene_list) <- df$X
+
+# omit any NA values 
+gene_list<-na.omit(original_gene_list)
+
+# sort the list in decreasing order (required for clusterProfiler)
+gene_list = sort(gene_list, decreasing = TRUE)
+
+head(gene_list)
+keytypes(org.Hs.eg.db)
+```
+
+
+```{r}
+# SYMBOL 2
+# ALIAS 3
+gse <- gseGO(geneList=gene_list, 
+             ont ="ALL", 
+             keyType = "ALIAS", 
+             minGSSize = 3, 
+             maxGSSize = 500, 
+             pvalueCutoff = 0.05, 
+             nPermSimple = 100000,
+             verbose = TRUE, 
+             OrgDb = organism) 
+             #pAdjustMethod = "hochberg")
+
+gse
+```
+
+```{r}
+require(DOSE)
+dotplot(gse, showCategory=10, split=".sign") + facet_grid(.~.sign)
+ggsave("../CCL8-AND-CCL13_FNA_GSEA-pathway-top10.eps", width = 7, height = 5.5)
+```
+
+## Enrichment Map
+```{r}
+# categorySize can be either 'pvalue' or 'geneNum'
+cnetplot(gse, categorySize="pvalue", foldChange=gene_list, showCategory = 3)
+ggsave("../CCL8-AND-CCL13_FNA_GSEA-netplot.png", width = 7, height = 5)
+```
+## Ridgeplot
+```{r}
+ridgeplot(gse) + labs(x = "enrichment distribution")
+ggsave("../CCL8-AND-CCL13_FNA_GSEA-pathway-top10-ridgeplot.eps", width = 7, height = 5)
+```
+
+
+
+
+
+
+
+## EcoTyper - Not enough samples
+
+
+
+## CCL18
+```{r}
+# reading in data from deseq2
+df = read.csv("../DEG_FNA/CCL18/DEG_CCL18-SCT-DE_genes.csv", header=TRUE) 
+
+# we want the log2 fold change 
+original_gene_list <- df$avg_log2FC
+
+# name the vector
+names(original_gene_list) <- df$X
+
+# omit any NA values 
+gene_list<-na.omit(original_gene_list)
+
+# sort the list in decreasing order (required for clusterProfiler)
+gene_list = sort(gene_list, decreasing = TRUE)
+
+head(gene_list)
+keytypes(org.Hs.eg.db)
+```
+
+
+```{r}
+# SYMBOL 2
+# ALIAS 3
+gse <- gseGO(geneList=gene_list, 
+             ont ="ALL", 
+             keyType = "ALIAS", 
+             minGSSize = 3, 
+             maxGSSize = 500, 
+             pvalueCutoff = 0.05, 
+             nPermSimple = 100000,
+             verbose = TRUE, 
+             OrgDb = organism) 
+             #pAdjustMethod = "hochberg")
+
+gse
+```
+
+```{r}
+require(DOSE)
+options(enrichplot.colours = c("red","blue"))
+
+dotplot(gse, showCategory=10, split=".sign") + facet_grid(.~.sign)
+ggsave("../GSEA-CCL18-pathway-top10-2.eps", width = 7, height = 5.5)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## MyeloidDC - 3m
+```{r}
+# reading in data from deseq2
+df <- read.csv("../DEG_FNA/MyeloidDC/Response3m_CRPD_MyeloidDC/DEG_MyeloidDC_3m-SCT-DE_genes.csv", header=TRUE) 
+
+# we want the log2 fold change 
+original_gene_list <- df$avg_log2FC
+
+# name the vector
+names(original_gene_list) <- df$X
+
+# omit any NA values 
+gene_list<-na.omit(original_gene_list)
+
+# sort the list in decreasing order (required for clusterProfiler)
+gene_list = sort(gene_list, decreasing = TRUE)
+
+head(gene_list)
+keytypes(org.Hs.eg.db)
+```
+
+
+```{r}
+# SYMBOL 2
+# ALIAS 3
+gse <- gseGO(geneList=gene_list, 
+             ont ="MF", 
+             keyType = "ALIAS", 
+             minGSSize = 3, 
+             maxGSSize = 500, 
+             pvalueCutoff = 0.05, 
+             nPermSimple = 1000,
+             verbose = TRUE, 
+             OrgDb = organism) 
+             #pAdjustMethod = "hochberg")
+
+gse
+```
+
+```{r}
+require(DOSE)
+options(enrichplot.colours = c("red","blue"))
+
+dotplot(gse, showCategory=10, split=".sign") + facet_grid(.~.sign)
+ggsave("../GSEA-CCL18-pathway-top10-2.eps", width = 7, height = 5.5)
+```
+
+
+```{r}
+result <- read.csv("../DEG_FNA/MyeloidDC/Response3m_CRPD_MyeloidDC/DEG_MyeloidDC_3m-SCT-p_adj-pathway-result.csv", header=TRUE) 
+
+top20_result <- result %>%
+  slice_head(n = 20)
+
+top20_result$Sign <- c("-", "-", "-", "+", "-", "+", "-", "+", "-", "-", "-", "+", "+", "+", "-", "+", "-", "+", "-", "-")
+
+dotplot(top20_result, showCategory=20, split="Sign") + facet_grid(.~Sign)
+
+top20_result
+result
+```
+
+```{r}
+de_ids <- human_ids[which(human_ids$hgnc_symbol %in% df$X), ]
+de_pathway <- enrichPathway(gene = de_ids$entrezgene_id, organism = "human", pvalueCutoff = 0.05, readable = TRUE)
+dotplot(de_pathway, orderBy = "GeneRatio", showCategory = 20)
+
+de_ids
+
+df
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Looking at pathways enriched in CAR+ T cells via SCENIC
+```{r}
+# SCT
+#df <- read.csv("../CCT5001-CCT5019-All-CAR_Pos-pt_nt_90_clonotype-C_FNA-to-D_Peak-log2fc_1_to_-1-Response_3m-SCT-DE_genes.csv", header=TRUE) 
+# SCENIC
+df <- read.csv("../CCT5001-CCT5019-All-CAR_Pos-pt_nt_90_clonotype-C_FNA-to-D_Peak-log2fc_1_to_-1-Response_3m-scenic-DE_genes.csv", header=TRUE) 
+
+# we want the log2 fold change 
+original_gene_list <- df$avg_log2FC
+
+# name the vector
+names(original_gene_list) <- df$X
+
+# omit any NA values 
+gene_list<-na.omit(original_gene_list)
+
+# sort the list in decreasing order (required for clusterProfiler)
+gene_list = sort(gene_list, decreasing = TRUE)
+```
+
+
+```{r}
+# SYMBOL 2
+# ALIAS 3
+gse <- gseGO(geneList=gene_list, 
+             ont ="ALL", 
+             keyType = "ALIAS", 
+             minGSSize = 3, 
+             maxGSSize = 500, 
+             pvalueCutoff = 0.05, 
+             nPermSimple = 10000,
+             verbose = TRUE, 
+             OrgDb = organism) 
+             #pAdjustMethod = "hochberg")
+
+gse
+```
+
+```{r}
+require(DOSE)
+options(enrichplot.colours = c("red","blue"))
+
+dotplot(gse, showCategory=5, split=".sign") + facet_grid(.~.sign)
+ggsave("../GSEA-CART-Pathway-SCT-Top10_1.eps", width = 7, height = 5.5)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

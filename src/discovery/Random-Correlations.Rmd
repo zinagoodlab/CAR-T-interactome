@@ -1,0 +1,244 @@
+---
+title: "Untitled"
+author: "Kelvin Mo"
+date: "2024-07-23"
+output: html_document
+---
+
+```{r}
+df$Max_CRS[which(df$Max_CRS == 0)] <- "0-1"
+df$Max_CRS[which(df$Max_CRS == 1)] <- "0-1"
+df$Max_CRS[which(df$Max_CRS == 2)] <- "2-4"
+
+df$Max_ICANS[which(df$Max_ICANS == 0)] <- "0-1"
+df$Max_ICANS[which(df$Max_ICANS == 1)] <- "0-1"
+df$Max_ICANS[which(df$Max_ICANS == 2)] <- "2-4"
+df$Max_ICANS[which(df$Max_ICANS == 3)] <- "2-4"
+```
+
+
+
+```{r setup, include=FALSE}
+df@meta.data$CCL8_expr <- df@assays$SCT@data['CCL8', ]
+df@meta.data$CCL13_expr <- df@assays$SCT@data['CCL13', ]
+df@meta.data$CCL18_expr <- df@assays$SCT@data['CCL18', ]
+df@meta.data$CCL8_CCL13_status <- ifelse(df@assays$SCT@data['CCL8', ] > 0 & df@assays$SCT@data['CCL13', ] > 0, 1, 0)
+```
+
+
+# SCT - CELL LELVEL
+
+```{r}
+wilcox <- wilcox.test(CCL8_expr ~ High_LDH.x, data = df@meta.data)
+p1 <- wilcox$p.value
+wilcox <- wilcox.test(CCL13_expr ~ High_LDH.x, data = df@meta.data)
+p2 <- wilcox$p.value
+wilcox <- wilcox.test(CCL18_expr ~ High_LDH.x, data = df@meta.data)
+p3 <- wilcox$p.value
+
+median_CCL8_High_LDH <- mean(df@meta.data$CCL8_expr[df@meta.data$High_LDH.x == TRUE])
+median_CCL8_Low_LDH <- mean(df@meta.data$CCL8_expr[df@meta.data$High_LDH.x == FALSE])
+median_CCL13_High_LDH <- mean(df@meta.data$CCL13_expr[df@meta.data$High_LDH.x == TRUE])
+median_CCL13_Low_LDH <- mean(df@meta.data$CCL13_expr[df@meta.data$High_LDH.x == FALSE])
+median_CCL18_High_LDH <- mean(df@meta.data$CCL18_expr[df@meta.data$High_LDH.x == TRUE])
+median_CCL18_Low_LDH <- mean(df@meta.data$CCL18_expr[df@meta.data$High_LDH.x == FALSE])
+
+print(paste0("CCL8 ~ High_LDH: p value = ", p1, ", median High LDH = ", median_CCL8_High_LDH, ", median Low LDH = ", median_CCL8_Low_LDH))
+print(paste0("CCL13 ~ High_LDH: p value = ", p2, ", median High LDH = ", median_CCL13_High_LDH, ", median Low LDH = ", median_CCL13_Low_LDH))
+print(paste0("CCL18 ~ High_LDH: p value = ", p3, ", median High LDH = ", median_CCL18_High_LDH, ", median Low LDH = ", median_CCL18_Low_LDH))
+
+```
+
+```{r}
+wilcox <- wilcox.test(CCL8_expr ~ Max_CRS, data = df@meta.data)
+p1 <- wilcox$p.value
+wilcox <- wilcox.test(CCL8_expr ~ Max_ICANS, data = df@meta.data)
+p2 <- wilcox$p.value
+wilcox <- wilcox.test(CCL13_expr ~ Max_CRS, data = df@meta.data)
+p3 <- wilcox$p.value
+wilcox <- wilcox.test(CCL13_expr ~ Max_ICANS, data = df@meta.data)
+p4 <- wilcox$p.value
+wilcox <- wilcox.test(CCL18_expr ~ Max_CRS, data = df@meta.data)
+p5 <- wilcox$p.value
+wilcox <- wilcox.test(CCL18_expr ~ Max_ICANS, data = df@meta.data)
+p6 <- wilcox$p.value
+
+mean_CCL8_Max_CRS <- mean(df@meta.data$CCL8_expr[df@meta.data$Max_CRS == "2-4"])
+mean_CCL8_No_CRS <- mean(df@meta.data$CCL8_expr[df@meta.data$Max_CRS == "0-1"])
+mean_CCL8_Max_ICANS <- mean(df@meta.data$CCL8_expr[df@meta.data$Max_ICANS == "2-4"])
+mean_CCL8_No_ICANS <- mean(df@meta.data$CCL8_expr[df@meta.data$Max_ICANS == "0-1"])
+mean_CCL13_Max_CRS <- mean(df@meta.data$CCL13_expr[df@meta.data$Max_CRS == "2-4"])
+mean_CCL13_No_CRS <- mean(df@meta.data$CCL13_expr[df@meta.data$Max_CRS == "0-1"])
+mean_CCL13_Max_ICANS <- mean(df@meta.data$CCL13_expr[df@meta.data$Max_ICANS == "2-4"])
+mean_CCL13_No_ICANS <- mean(df@meta.data$CCL13_expr[df@meta.data$Max_ICANS == "0-1"])
+mean_CCL18_Max_CRS <- mean(df@meta.data$CCL18_expr[df@meta.data$Max_CRS == "2-4"])
+mean_CCL18_No_CRS <- mean(df@meta.data$CCL18_expr[df@meta.data$Max_CRS == "0-1"])
+mean_CCL18_Max_ICANS <- mean(df@meta.data$CCL18_expr[df@meta.data$Max_ICANS == "2-4"])
+mean_CCL18_No_ICANS <- mean(df@meta.data$CCL18_expr[df@meta.data$Max_ICANS == "0-1"])
+
+print(paste0("CCL8 ~ Max CRS: p value = ", p1, "; mean Max CRS = ", mean_CCL8_Max_CRS, ", mean No CRS = ", mean_CCL8_No_CRS))
+print(paste0("CCL8 ~ Max ICANS: p value = ", p2, "; mean Max ICANS = ", mean_CCL8_Max_ICANS, ", mean No ICANS = ", mean_CCL8_No_ICANS))
+print(paste0("CCL13 ~ Max CRS: p value = ", p3, "; mean Max CRS = ", mean_CCL13_Max_CRS, ", mean No CRS = ", mean_CCL13_No_CRS))
+print(paste0("CCL13 ~ Max ICANS: p value = ", p4, "; mean Max ICANS = ", mean_CCL13_Max_ICANS, ", mean No ICANS = ", mean_CCL13_No_ICANS))
+print(paste0("CCL18 ~ Max CRS: p value = ", p5, "; mean Max CRS = ", mean_CCL18_Max_CRS, ", mean No CRS = ", mean_CCL18_No_CRS))
+print(paste0("CCL18 ~ Max ICANS: p value = ", p6, "; mean Max ICANS = ", mean_CCL18_Max_ICANS, ", mean No ICANS = ", mean_CCL18_No_ICANS))
+
+```
+
+
+```{r}
+correlation_result <- cor.test(df@meta.data$Pre_LD_LDH, df@meta.data$CCL8_expr, method = "pearson")
+p1 <- correlation_result$p.value
+cor1 <- correlation_result$estimate
+correlation_result <- cor.test(df@meta.data$Pre_LD_LDH, df@meta.data$CCL13_expr, method = "pearson")
+p2 <- correlation_result$p.value
+cor2 <- correlation_result$estimate
+correlation_result <- cor.test(df@meta.data$Pre_LD_LDH, df@meta.data$CCL18_expr, method = "pearson")
+p3 <- correlation_result$p.value
+cor3 <- correlation_result$estimate
+
+
+
+print(paste0("Pre LD LDH ~ CCL8: p value = ", p1, " | corr: ", cor1))
+print(paste0("Pre LD LDH ~ CCL13: p value = ", p2, " | corr: ", cor2))
+print(paste0("Pre LD LDH ~ CCL18: p value = ", p3, " | corr: ", cor3))
+
+```
+
+
+
+```{r}
+wilcox <- wilcox.test(CCL8_CCL13_status ~ High_LDH.x, data = df@meta.data)
+p1 <- wilcox$p.value
+wilcox <- wilcox.test(CCL8_CCL13_status ~ Max_CRS, data = df@meta.data)
+p2 <- wilcox$p.value
+wilcox <- wilcox.test(CCL8_CCL13_status ~ Max_ICANS, data = df@meta.data)
+p3 <- wilcox$p.value
+
+mean1 <- mean(df@meta.data$CCL8_CCL13_status[df@meta.data$High_LDH.x == TRUE])
+mean2 <- mean(df@meta.data$CCL8_CCL13_status[df@meta.data$High_LDH.x == FALSE])
+mean3 <- mean(df@meta.data$CCL8_CCL13_status[df@meta.data$Max_CRS == "0-1"])
+mean4 <- mean(df@meta.data$CCL8_CCL13_status[df@meta.data$Max_CRS == "2-4"])
+mean5 <- mean(df@meta.data$CCL8_CCL13_status[df@meta.data$Max_ICANS == "0-1"])
+mean6 <- mean(df@meta.data$CCL8_CCL13_status[df@meta.data$Max_ICANS == "2-4"])
+
+print(paste0("CCL8+CCL13+ ~ High LDH: p value = ", p1, " | ", "High LDH: ", mean1, " | Low LDH: ", mean2))
+print(paste0("CCL8+CCL13+ ~ Max CRS: p value = ", p2, " | ", "0-1: ", mean3, " | 2-4: ", mean4))
+print(paste0("CCL8+CCL13+ ~ Max ICANS: p value = ", p3, " | ", "0-1: ", mean5, " | 2-4: ", mean6))
+```
+
+
+
+
+
+
+
+# PATIENT LEVEL
+```{r}
+patient_summary <- df@meta.data %>%
+  group_by(Patient_ID) %>%
+  summarise(
+    Age = dplyr::first(Age),
+    Sex = dplyr::first(Sex),
+    Disease_type = dplyr::first(Disease_type),
+    High_LDH = dplyr::first(High_LDH.x),
+    Pre_LD_LDH = dplyr::first(Pre_LD_LDH),
+    Response_30d = dplyr::first(Response_30d),  
+    Response_3m = dplyr::first(Response_3m),    
+    Response_6m = dplyr::first(Response_6m),   
+    Max_CRS = dplyr::first(Max_CRS),
+    Max_ICANS = dplyr::first(Max_ICANS),
+    CMV_Pre_Ab = dplyr::first(CMV_Pre_Ab),
+    CMV_PCR_First_28 = dplyr::first(CMV_PCR_First_28),
+    CMV_PCR_D29_to_D180 = dplyr::first(CMV_PCR_D29_to_D180),
+    Percent_CCL8 = sum(CCL8_expr > 0) / n() *100,
+    Percent_CCL13 = sum(CCL13_expr > 0) / n() *100,
+    Percent_CCL18 = sum(CCL18_expr > 0) / n() *100,
+    Percent_CCL8_Myeloid = sum(CCL8_expr > 0) / sum(interactome_group == "Myeloid DC") * 100,
+    Percent_CCL13_Myeloid = sum(CCL13_expr > 0) / sum(interactome_group == "Myeloid DC") * 100,
+    Percent_CCL18_Myeloid = sum(CCL18_expr > 0) / sum(interactome_group == "Myeloid DC") * 100,
+    Percent_CCL8_CCL13 = sum(CCL8_expr > 0 & CCL13_expr > 0) / n() * 100,
+    Percent_CCL8_CCL13_Myeloid = sum(CCL8_expr > 0 & CCL13_expr > 0) / sum(interactome_group == "Myeloid DC") * 100
+  )
+```
+
+
+```{r}
+wilcox <- wilcox.test(Percent_CCL8 ~ High_LDH, data = patient_summary)
+p1 <- wilcox$p.value
+wilcox <- wilcox.test(Percent_CCL13 ~ High_LDH, data = patient_summary)
+p2 <- wilcox$p.value
+wilcox <- wilcox.test(Percent_CCL18 ~ High_LDH, data = patient_summary)
+p3 <- wilcox$p.value
+wilcox <- wilcox.test(Percent_CCL8_Myeloid ~ High_LDH, data = patient_summary)
+p4 <- wilcox$p.value
+wilcox <- wilcox.test(Percent_CCL13_Myeloid ~ High_LDH, data = patient_summary)
+p5 <- wilcox$p.value
+wilcox <- wilcox.test(Percent_CCL18_Myeloid ~ High_LDH, data = patient_summary)
+p6 <- wilcox$p.value
+wilcox <- wilcox.test(Percent_CCL8_CCL13 ~ High_LDH, data = patient_summary)
+p7 <- wilcox$p.value
+wilcox <- wilcox.test(Percent_CCL8_CCL13_Myeloid ~ High_LDH, data = patient_summary)
+p8 <- wilcox$p.value
+```
+
+
+
+```{r}
+# Calculate means for each group
+mean_CCL8_High_LDH <- mean(patient_summary$Percent_CCL8[patient_summary$High_LDH == TRUE])
+mean_CCL8_Low_LDH <- mean(patient_summary$Percent_CCL8[patient_summary$High_LDH == FALSE])
+mean_CCL13_High_LDH <- mean(patient_summary$Percent_CCL13[patient_summary$High_LDH == TRUE])
+mean_CCL13_Low_LDH <- mean(patient_summary$Percent_CCL13[patient_summary$High_LDH == FALSE])
+mean_CCL18_High_LDH <- mean(patient_summary$Percent_CCL18[patient_summary$High_LDH == TRUE])
+mean_CCL18_Low_LDH <- mean(patient_summary$Percent_CCL18[patient_summary$High_LDH == FALSE])
+mean_CCL8_Myeloid_High_LDH <- mean(patient_summary$Percent_CCL8_Myeloid[patient_summary$High_LDH == TRUE])
+mean_CCL8_Myeloid_Low_LDH <- mean(patient_summary$Percent_CCL8_Myeloid[patient_summary$High_LDH == FALSE])
+mean_CCL13_Myeloid_High_LDH <- mean(patient_summary$Percent_CCL13_Myeloid[patient_summary$High_LDH == TRUE])
+mean_CCL13_Myeloid_Low_LDH <- mean(patient_summary$Percent_CCL13_Myeloid[patient_summary$High_LDH == FALSE])
+mean_CCL18_Myeloid_High_LDH <- mean(patient_summary$Percent_CCL18_Myeloid[patient_summary$High_LDH == TRUE])
+mean_CCL18_Myeloid_Low_LDH <- mean(patient_summary$Percent_CCL18_Myeloid[patient_summary$High_LDH == FALSE])
+mean_CCL8_CCL13_High_LDH <- mean(patient_summary$Percent_CCL8_CCL13[patient_summary$High_LDH == TRUE])
+mean_CCL8_CCL13_Low_LDH <- mean(patient_summary$Percent_CCL8_CCL13[patient_summary$High_LDH == FALSE])
+mean_CCL8_CCL13_Myeloid_High_LDH <- mean(patient_summary$Percent_CCL8_CCL13_Myeloid[patient_summary$High_LDH == TRUE])
+mean_CCL8_CCL13_Myeloid_Low_LDH <- mean(patient_summary$Percent_CCL8_CCL13_Myeloid[patient_summary$High_LDH == FALSE])
+
+print(paste0("Percent_CCL8 ~ High_LDH: p value = ", p1, ", mean High LDH = ", mean_CCL8_High_LDH, ", mean Low LDH = ", mean_CCL8_Low_LDH))
+print(paste0("Percent_CCL13 ~ High_LDH: p value = ", p2, ", mean High LDH = ", mean_CCL13_High_LDH, ", mean Low LDH = ", mean_CCL13_Low_LDH))
+print(paste0("Percent_CCL18 ~ High_LDH: p value = ", p3, ", mean High LDH = ", mean_CCL18_High_LDH, ", mean Low LDH = ", mean_CCL18_Low_LDH))
+print(paste0("Percent_CCL8_Myeloid ~ High_LDH: p value = ", p4, ", mean High LDH = ", mean_CCL8_Myeloid_High_LDH, ", mean Low LDH = ", mean_CCL8_Myeloid_Low_LDH))
+print(paste0("Percent_CCL13_Myeloid ~ High_LDH: p value = ", p5, ", mean High LDH = ", mean_CCL13_Myeloid_High_LDH, ", mean Low LDH = ", mean_CCL13_Myeloid_Low_LDH))
+print(paste0("Percent_CCL18_Myeloid ~ High_LDH: p value = ", p6, ", mean High LDH = ", mean_CCL18_Myeloid_High_LDH, ", mean Low LDH = ", mean_CCL18_Myeloid_Low_LDH))
+print(paste0("Percent_CCL8_CCL13 ~ High_LDH: p value = ", p7, ", mean High LDH = ", mean_CCL8_CCL13_High_LDH, ", mean Low LDH = ", mean_CCL8_CCL13_Low_LDH))
+print(paste0("Percent_CCL8_CCL13_Myeloid ~ High_LDH: p value = ", p8, ", mean High LDH = ", mean_CCL8_CCL13_Myeloid_High_LDH, ", mean Low LDH = ", mean_CCL8_CCL13_Myeloid_Low_LDH))
+
+```
+
+
+
+
+
+
+
+
+```{r}
+patient_summary
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

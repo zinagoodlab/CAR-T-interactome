@@ -1,0 +1,511 @@
+---
+title: "FNA-Cluster-Abundance-Analysis"
+author: "Kelvin Mo"
+date: "2024-06-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+rm(list = ls())
+if (supportsMulticore()) plan("multicore", workers = 32 - 1)
+options(future.globals.maxSize = 40000 * 1024^2, future.rng.onMisuse = "ignore")  # 4000 Gb
+```
+
+```{r}
+library(rstatix)  # wilcox_test
+library(speckle)  # propeller
+library(limma)  # needed for propeller
+library(Seurat)  # single-cell analysis
+library(dplyr)  # %>%
+library(ggplot2)  # graphics
+library(future)  # parallel computing for Seurat
+library(future.apply)  # lapply for future to control random seeds
+
+```
+
+
+```{r}
+# Define a function to perform cluster-based differential expression using propeller.
+run_propeller <- function(mx, mx_name, y, mx_resolution = 0.2, mx_sample = "patient_id",
+													mx_transform = "logit", max_log2fc = 5) {
+	# 1. Prepare data.
+	if (ncol(mx) < 100) return()
+	mx_name <- paste0(mx_name, "-clusters_res", mx_resolution)
+	mx <- FindNeighbors(mx, dims = 1:30)
+	mx <- FindClusters(mx, resolution = mx_resolution, algorithm = 3, n.start = 50, n.iter = 20)  # algorithm = 4 is Leiden; fails for large objects
+	mx_500 <- subset(mx, downsample = 500)
+	mx_reduction <- "umap"
+	if (length(unique(mx$seurat_clusters)) < 10) {
+		mx_cols <- c("#05668d", "#e07a5f", "#81b29a", "#5555CC", "#6a040f", "#dda15e", "#3d405b", "#999999", "#ba091b")
+	} else if (length(unique(mx$seurat_clusters)) <= 28) {
+		mx_cols <- c("#AAAAEE", "#5555CC", "#0000CC", "#1D3398", "#f0b6d8", "#DE8AC9", "#CD68DA", "#912966", "#4a1333", "#eb8e23", "#3c0382",
+								 "#CCCCCC", "#999999", "#555555", "#000000", "#cfa174", "#94663a", "#7d4613", "#4a2808", "#8fc294", "#578c5c", "#248A3D", "#3F6634", "#07330d",
+								 "#AA4444", "#BB1111", "#CC0000", "#880000")
+	} else {
+		mx_cols <- NULL
+	}
+	cluster_ids <- mx@meta.data[, c("patient_id", "Response_30d", "seurat_clusters")]
+
+	# 2. Run propeller.
+	mx_name <- paste0(mx_name, "-by-", mx_sample, "-", mx_transform)
+	mx_clusters <- table(mx@meta.data[, "seurat_clusters"])
+	# mx_clusters <- names(mx_clusters[which(mx_clusters >= 10)])
+	if (length(unique(mx_clusters)) < 2) return()
+	Idents(mx) <- "seurat_clusters"
+	# mx <- subset(mx, idents = mx_clusters)
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 3) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	mx$seurat_clusters <- factor(mx$seurat_clusters)
+	mx@meta.data[, mx_sample] <- as.character(mx@meta.data[, mx_sample])
+	propeller_da <- try(propeller(clusters = mx$seurat_clusters, sample = mx@meta.data[, mx_sample],
+																group = mx$y, transform = mx_transform), silent = TRUE)
+	if (inherits(propeller_da, "try-error")) return()
+	dir.create("propeller")
+	setwd("propeller")
+	DimPlot(mx_500, group.by = "seurat_clusters", shuffle = TRUE, seed = 1, reduction = mx_reduction, cols = mx_cols)
+	ggsave(filename = paste0(mx_name, "-", mx_reduction, ".eps"), width = 4.6, height = 4)
+	write.csv(propeller_da, paste0(mx_name, "-propeller.csv"))
+	write.csv(cluster_ids, paste0(mx_name, "-IDs.csv"))
+
+	# 3. Plot cell type proportions
+	p <- plotCellTypeProps(clusters = mx$seurat_clusters, sample = mx@meta.data[, mx_sample])
+	p <- p + scale_fill_manual(values = mx_cols)
+	p <- p + theme_bw()
+	p <- p + coord_flip()
+	ggsave(filename = paste0(mx_name, "-proportions.eps"), width = 4.6, height = 4)
+
+	# 4. Plot results on UMAP.
+	if (sum(propeller_da$P.Value < 0.1) > 1) {
+		propeller_da$PropRatio[which(is.nan(propeller_da$PropRatio))] <- NA
+		propeller_da <- propeller_da[, c("BaselineProp.clusters", "PropRatio", "P.Value", "FDR")]
+		colnames(propeller_da)[1] <-  "seurat_clusters"
+		row_names <- rownames(mx@meta.data)
+		mx@meta.data <- left_join(mx@meta.data, propeller_da, by =  "seurat_clusters")
+		rownames(mx@meta.data) <- row_names
+		mx$PropRatio <- log2(mx$PropRatio)
+		mx$PropRatio[which(is.nan(mx$PropRatio))] <- NA
+		mx$PropRatio[which(mx$PropRatio > max_log2fc)] <- max_log2fc
+		mx$PropRatio[which(mx$PropRatio < -max_log2fc)] <- -max_log2fc
+		mx$PropRatio <- -mx$PropRatio
+
+		# p < 0.1
+		mx$PropRatio_Signif <- mx$PropRatio
+		mx$PropRatio_Signif[which(mx$P.Value >= 0.1 | is.na(mx$PropRatio))] <- NA
+		mx_500 <- subset(mx, downsample = 500)
+		mx_reduction <- "umap"
+		for (plot_limit in c(2, 3, max_log2fc)) {
+			if (sum(!is.na(mx_500$PropRatio)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"))
+				ggsave(filename = paste0(mx_name, "-PropRatio-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			if (sum(!is.na(mx_500$PropRatio_Signif)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio_Signif', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"), subtitle = 'p < 0.10')
+				ggsave(filename = paste0(mx_name, "-PropRatio_Signif_0.1-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+
+		# p < 0.05
+		mx_500$PropRatio_Signif[which(mx_500$P.Value >= 0.05 | is.na(mx_500$PropRatio))] <- NA
+		for (plot_limit in c(2, 3, max_log2fc)) {
+			if (sum(!is.na(mx_500$PropRatio_Signif)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio_Signif', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"), subtitle = 'p < 0.05')
+				ggsave(filename = paste0(mx_name, "-PropRatio_Signif_0.05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+
+	setwd("../")
+}
+```
+
+
+
+################################ Inputs #################################
+```{r}
+# 1. Define study parameters.
+## Trial ID
+trial_id <- "CCT6005"
+
+# Read in FNA dataset
+df <- readRDS("FNA_InteractomeAnalysis_2.rds")
+#df2 <- readRDS("FNA_InteractomeAnalysis_3.rds")
+```
+
+
+###################################################################
+# Cluster Abundance Analysis
+```{r}
+mx <- df
+
+# 30d, 3m, 6m
+mx$y <- NA
+mx$y[mx$Response_6m %in% c("CR", "PR")] <- 1
+mx$y[mx$Response_6m %in% c("SD", "PD")] <- 2
+
+```
+
+```{r}
+mx_name <- "FNA-Response6m"
+mx_resolution = 0.1 #0.1, 0.2, 0.3
+mx_sample = "patient_id"
+mx_transform = "logit"
+max_log2fc = 5
+y <- "y"
+#run_propeller(mx, mx_name, y, mx_resolution)
+```
+
+
+```{r}
+# 1. Prepare data.
+	if (ncol(mx) < 100) return()
+	mx_name <- paste0(mx_name, "-clusters_res", mx_resolution)
+	mx <- FindNeighbors(mx, dims = 1:30)
+	mx <- FindClusters(mx, resolution = mx_resolution, algorithm = 3, n.start = 50, n.iter = 20)  # algorithm = 4 is Leiden; fails for large objects
+	mx_500 <- subset(mx, downsample = 500)
+	mx_reduction <- "wnn.umap"
+	if (length(unique(mx$seurat_clusters)) < 10) {
+		mx_cols <- c("#05668d", "#e07a5f", "#81b29a", "#5555CC", "#6a040f", "#dda15e", "#3d405b", "#999999", "#ba091b")
+	} else if (length(unique(mx$seurat_clusters)) <= 28) {
+		mx_cols <- c("#AAAAEE", "#5555CC", "#0000CC", "#1D3398", "#f0b6d8", "#DE8AC9", "#CD68DA", "#912966", "#4a1333", "#eb8e23", "#3c0382", "#CCCCCC", "#999999", "#555555", "#000000", "#cfa174", "#94663a", "#7d4613", "#4a2808", "#8fc294", "#578c5c", "#248A3D", "#3F6634", "#07330d", "#AA4444", "#BB1111", "#CC0000", "#880000")
+		mx_cols <- c("#880000", "#1976d2ff", "#8fc294", "#eb8e23", "#cfa174", "#CD68DA", "#3f6634", "#3c0382","#aa4444", "#7d4613", "#AA4444", "#4a2808")
+		
+	} else {
+		mx_cols <- NULL
+	}
+	cluster_ids <- mx@meta.data[, c("patient_id", y, "Response_30d", "Response_3m", "Response_6m" ,"cell_type", "seurat_clusters")]
+
+	# 2. Run propeller.
+	mx_name <- paste0(mx_name, "-by-", mx_sample, "-", mx_transform)
+	mx_clusters <- table(mx@meta.data[, "seurat_clusters"])
+	# mx_clusters <- names(mx_clusters[which(mx_clusters >= 10)])
+	if (length(unique(mx_clusters)) < 2) return()
+	Idents(mx) <- "seurat_clusters"
+	# mx <- subset(mx, idents = mx_clusters)
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 3) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	mx$seurat_clusters <- factor(mx$seurat_clusters)
+	mx@meta.data[, mx_sample] <- as.character(mx@meta.data[, mx_sample])
+	propeller_da <- try(propeller(clusters = mx$seurat_clusters, sample = mx@meta.data[, mx_sample], group = mx$y, transform = mx_transform), silent = TRUE)
+	if (inherits(propeller_da, "try-error")) print("error")
+	dir.create("propeller")
+	setwd("propeller")
+	DimPlot(mx, group.by = "seurat_clusters", shuffle = TRUE, seed = 1, reduction = mx_reduction, cols = mx_cols)
+	ggsave(filename = paste0(mx_name, "-", mx_reduction, ".eps"), width = 4.6, height = 4)
+	write.csv(propeller_da, paste0(mx_name, "-propeller.csv"))
+	write.csv(cluster_ids, paste0(mx_name, "-IDs.csv"))
+
+	# 3. Plot cell type proportions
+	p <- plotCellTypeProps(clusters = mx$seurat_clusters, sample = mx@meta.data[, mx_sample])
+	p <- p + scale_fill_manual(values = mx_cols)
+	p <- p + theme_bw()
+	p <- p + coord_flip()
+	ggsave(filename = paste0(mx_name, "-proportions.eps"), width = 4.6, height = 4)
+
+	# 4. Plot results on UMAP.
+	if (sum(propeller_da$P.Value < 0.1) > 1) {
+		propeller_da$PropRatio[which(is.nan(propeller_da$PropRatio))] <- NA
+		propeller_da <- propeller_da[, c("BaselineProp.clusters", "PropRatio", "P.Value", "FDR")]
+		colnames(propeller_da)[1] <-  "seurat_clusters"
+		row_names <- rownames(mx@meta.data)
+		mx@meta.data <- left_join(mx@meta.data, propeller_da, by =  "seurat_clusters")
+		rownames(mx@meta.data) <- row_names
+		mx$PropRatio <- log2(mx$PropRatio)
+		mx$PropRatio[which(is.nan(mx$PropRatio))] <- NA
+		mx$PropRatio[which(mx$PropRatio > max_log2fc)] <- max_log2fc
+		mx$PropRatio[which(mx$PropRatio < -max_log2fc)] <- -max_log2fc
+		mx$PropRatio <- -mx$PropRatio
+
+		# p < 0.1
+		mx$PropRatio_Signif <- mx$PropRatio
+		mx$PropRatio_Signif[which(mx$P.Value >= 0.1 | is.na(mx$PropRatio))] <- NA
+		mx_500 <- subset(mx, downsample = 500)
+		mx_reduction <- "wnn.umap"
+		for (plot_limit in c(2, 3, max_log2fc)) {
+			if (sum(!is.na(mx_500$PropRatio)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"))
+				ggsave(filename = paste0(mx_name, "-PropRatio-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			if (sum(!is.na(mx_500$PropRatio_Signif)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio_Signif', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"), subtitle = 'p < 0.10')
+				ggsave(filename = paste0(mx_name, "-PropRatio_Signif_0.1-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+
+		# p < 0.05
+		mx_500$PropRatio_Signif[which(mx_500$P.Value >= 0.05 | is.na(mx_500$PropRatio))] <- NA
+		for (plot_limit in c(2, 3, max_log2fc)) {
+			if (sum(!is.na(mx_500$PropRatio_Signif)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio_Signif', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"), subtitle = 'p < 0.05')
+				ggsave(filename = paste0(mx_name, "-PropRatio_Signif_0.05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+
+	setwd("../")
+```
+
+
+
+
+# Cell Type Abundance Analysis
+```{r}
+mx <- df2
+
+# 30d, 3m, 6m
+mx$y <- NA
+mx$y[mx$Response_3m %in% c("DR")] <- 1
+mx$y[mx$Response_3m %in% c("NDR")] <- 2
+
+```
+
+```{r}
+mx_name <- "FNA-Response6m"
+mx_resolution = 0.1 #0.1, 0.2, 0.3
+mx_sample = "patient_id"
+mx_transform = "logit"
+max_log2fc = 5
+y <- "y"
+#run_propeller(mx, mx_name, y, mx_resolution)
+```
+
+
+```{r}
+# 1. Prepare data.
+	if (ncol(mx) < 100) return()
+	mx_name <- paste0(mx_name, "-clusters_res", mx_resolution)
+	mx <- FindNeighbors(mx, dims = 1:30)
+	mx <- FindClusters(mx, resolution = mx_resolution, algorithm = 3, n.start = 50, n.iter = 20)  # algorithm = 4 is Leiden; fails for large objects
+	mx_500 <- subset(mx, downsample = 500)
+	mx_reduction <- "wnn.umap"
+	if (length(unique(mx$interactome_group)) < 10) {
+		mx_cols <- c("#05668d", "#e07a5f", "#81b29a", "#5555CC", "#6a040f", "#dda15e", "#3d405b", "#999999", "#ba091b")
+	} else if (length(unique(mx$interactome_group)) <= 28) {
+		mx_cols <- c("#AAAAEE", "#5555CC", "#0000CC", "#1D3398", "#f0b6d8", "#DE8AC9", "#CD68DA", "#912966", "#4a1333", "#eb8e23", "#3c0382", "#CCCCCC", "#999999", "#555555", "#000000", "#cfa174", "#94663a", "#7d4613", "#4a2808", "#8fc294", "#578c5c", "#248A3D", "#3F6634", "#07330d", "#AA4444", "#BB1111", "#CC0000", "#880000")
+		#mx_cols <- c("#880000", "#1976d2ff", "#8fc294", "#eb8e23", "#cfa174", "#CD68DA", "#3f6634", "#3c0382","#aa4444", "#7d4613", "#AA4444", "#4a2808")
+		
+	} else {
+		mx_cols <- NULL
+	}
+	cluster_ids <- mx@meta.data[, c("patient_id", y, "Response_30d", "Response_3m", "Response_6m" ,"cell_type", "interactome_group2")]
+	
+# 2. Run propeller.
+	mx_name <- paste0(mx_name, "-by-", mx_sample, "-", mx_transform)
+	mx_clusters <- table(mx@meta.data[, "interactome_group"])
+	# mx_clusters <- names(mx_clusters[which(mx_clusters >= 10)])
+	if (length(unique(mx_clusters)) < 2) return()
+	Idents(mx) <- "interactome_group2"
+	# mx <- subset(mx, idents = mx_clusters)
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 3) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	mx$interactome_group2 <- factor(mx$interactome_group2)
+	mx@meta.data[, mx_sample] <- as.character(mx@meta.data[, mx_sample])
+	propeller_da <- try(propeller(clusters = mx$interactome_group, sample = mx@meta.data[, mx_sample], group = mx$y, transform = mx_transform), silent = TRUE)
+	if (inherits(propeller_da, "try-error")) print("error")
+	dir.create("propeller")
+	setwd("propeller")
+	DimPlot(mx_500, group.by = "interactome_group", shuffle = TRUE, seed = 1, reduction = mx_reduction, cols = mx_cols)
+	ggsave(filename = paste0(mx_name, "-", mx_reduction, ".eps"), width = 4.6, height = 4)
+	write.csv(propeller_da, paste0(mx_name, "-propeller.csv"))
+	write.csv(cluster_ids, paste0(mx_name, "-IDs.csv"))
+
+	# 3. Plot cell type proportions
+	p <- plotCellTypeProps(clusters = mx$interactome_group, sample = mx@meta.data[, mx_sample])
+	p <- p + scale_fill_manual(values = mx_cols)
+	p <- p + theme_bw()
+	p <- p + coord_flip()
+	ggsave(filename = paste0(mx_name, "-proportions.eps"), width = 4.6, height = 4)
+
+	# 4. Plot results on UMAP.
+	if (sum(propeller_da$P.Value < 0.1) > 1) {
+		propeller_da$PropRatio[which(is.nan(propeller_da$PropRatio))] <- NA
+		propeller_da <- propeller_da[, c("BaselineProp.clusters", "PropRatio", "P.Value", "FDR")]
+		colnames(propeller_da)[1] <-  "interactome_group"
+		row_names <- rownames(mx@meta.data)
+		mx@meta.data <- left_join(mx@meta.data, propeller_da, by =  "interactome_group")
+		rownames(mx@meta.data) <- row_names
+		mx$PropRatio <- log2(mx$PropRatio)
+		mx$PropRatio[which(is.nan(mx$PropRatio))] <- NA
+		mx$PropRatio[which(mx$PropRatio > max_log2fc)] <- max_log2fc
+		mx$PropRatio[which(mx$PropRatio < -max_log2fc)] <- -max_log2fc
+		mx$PropRatio <- -mx$PropRatio
+
+		# p < 0.1
+		mx$PropRatio_Signif <- mx$PropRatio
+		mx$PropRatio_Signif[which(mx$P.Value >= 0.1 | is.na(mx$PropRatio))] <- NA
+		mx_500 <- subset(mx, downsample = 500)
+		mx_reduction <- "wnn.umap"
+		for (plot_limit in c(2, 3, max_log2fc)) {
+			if (sum(!is.na(mx_500$PropRatio)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"))
+				ggsave(filename = paste0(mx_name, "-PropRatio-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			if (sum(!is.na(mx_500$PropRatio_Signif)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio_Signif', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"), subtitle = 'p < 0.10')
+				ggsave(filename = paste0(mx_name, "-PropRatio_Signif_0.1-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+
+		# p < 0.05
+		mx_500$PropRatio_Signif[which(mx_500$P.Value >= 0.05 | is.na(mx_500$PropRatio))] <- NA
+		for (plot_limit in c(2, 3, max_log2fc)) {
+			if (sum(!is.na(mx_500$PropRatio_Signif)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio_Signif', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"), subtitle = 'p < 0.05')
+				ggsave(filename = paste0(mx_name, "-PropRatio_Signif_0.05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+
+	setwd("../")
+```
+
+
+
+
+
+
+
+
+
+
+
+# Cell Subset Abundance Analysis
+```{r}
+mx <- df
+
+# 30d, 3m, 6m
+mx$y <- NA
+mx$y[mx$Response_6m %in% c("CR", "PR")] <- 1
+mx$y[mx$Response_6m %in% c("SD", "PD")] <- 2
+
+```
+
+```{r}
+mx_name <- "FNA-Response6m"
+mx_resolution = 0.3 #0.1, 0.2, 0.3
+mx_sample = "patient_id"
+mx_transform = "logit"
+max_log2fc = 5
+y <- "y"
+#run_propeller(mx, mx_name, y, mx_resolution)
+```
+
+
+```{r}
+# 1. Prepare data.
+	if (ncol(mx) < 100) return()
+	mx_name <- paste0(mx_name, "-clusters_res", mx_resolution)
+	#mx <- FindNeighbors(mx, dims = 1:30)
+	#mx <- FindClusters(mx, resolution = mx_resolution, algorithm = 3, n.start = 50, n.iter = 20)  # algorithm = 4 is Leiden; fails for large objects
+	mx_500 <- subset(mx, downsample = 500)
+	mx_reduction <- "wnn.umap"
+	if (length(unique(mx$cell_subset)) < 10) {
+		mx_cols <- c("#05668d", "#e07a5f", "#81b29a", "#5555CC", "#6a040f", "#dda15e", "#3d405b", "#999999", "#ba091b")
+	} else if (length(unique(mx$cell_subset)) <= 32) {
+		mx_cols <- c("#AAAAEE", "#5555CC", "#0000CC", "#1D3398", "#f0b6d8", "#DE8AC9", "#CD68DA", "#912966", "#4a1333", "#eb8e23", "#3c0382", "#CCCCCC", "#999999", "#555555", "#000000", "#cfa174", "#94663a", "#7d4613", "#4a2808", "#8fc294", "#578c5c", "#248A3D", "#3F6634", "#07330d", "#AA4444", "#BB1111", "#CC0000", "#880000", 
+"#b2e5fcff", "#00579aff", "lightgreen", "#fa9294")
+		#mx_cols <- c("#880000", "#1976d2ff", "#8fc294", "#eb8e23", "#cfa174", "#CD68DA", "#3f6634", "#3c0382","#aa4444", "#7d4613", "#AA4444", "#4a2808")
+		
+	} else {
+		mx_cols <- NULL
+	}
+	cluster_ids <- mx@meta.data[, c("patient_id", y, "Response_30d", "Response_3m", "Response_6m" ,"cell_subset")]
+	
+# 2. Run propeller.
+	mx_name <- paste0(mx_name, "-by-", mx_sample, "-", mx_transform)
+	mx_clusters <- table(mx@meta.data[, "cell_subset"])
+	# mx_clusters <- names(mx_clusters[which(mx_clusters >= 10)])
+	if (length(unique(mx_clusters)) < 2) return()
+	Idents(mx) <- "cell_subset"
+	# mx <- subset(mx, idents = mx_clusters)
+	if (length(unique(mx@meta.data[which(mx$y == 1), mx_sample])) < 3 || length(unique(mx@meta.data[which(mx$y == 2), mx_sample])) < 3) return()
+	if (sum(mx$y == 1) < 10 || sum(mx$y == 2) < 10) return()
+	mx$cell_subset <- factor(mx$cell_subset)
+	mx@meta.data[, mx_sample] <- as.character(mx@meta.data[, mx_sample])
+	propeller_da <- try(propeller(clusters = mx$cell_subset, sample = mx@meta.data[, mx_sample], group = mx$y, transform = mx_transform), silent = TRUE)
+	if (inherits(propeller_da, "try-error")) print("error")
+	dir.create("propeller")
+	setwd("propeller")
+	DimPlot(mx_500, group.by = "cell_subset", shuffle = TRUE, seed = 1, reduction = mx_reduction, cols = mx_cols)
+	ggsave(filename = paste0(mx_name, "-", mx_reduction, ".eps"), width = 4.6, height = 4)
+	write.csv(propeller_da, paste0(mx_name, "-propeller.csv"))
+	write.csv(cluster_ids, paste0(mx_name, "-IDs.csv"))
+
+	# 3. Plot cell type proportions
+	p <- plotCellTypeProps(clusters = mx$cell_subset, sample = mx@meta.data[, mx_sample])
+	p <- p + scale_fill_manual(values = mx_cols)
+	p <- p + theme_bw()
+	p <- p + coord_flip()
+	ggsave(filename = paste0(mx_name, "-proportions.eps"), width = 4.6, height = 4)
+
+	# 4. Plot results on UMAP.
+	if (sum(propeller_da$P.Value < 0.1) > 1) {
+		propeller_da$PropRatio[which(is.nan(propeller_da$PropRatio))] <- NA
+		propeller_da <- propeller_da[, c("BaselineProp.clusters", "PropRatio", "P.Value", "FDR")]
+		colnames(propeller_da)[1] <-  "cell_subset"
+		row_names <- rownames(mx@meta.data)
+		mx@meta.data <- left_join(mx@meta.data, propeller_da, by =  "cell_subset")
+		rownames(mx@meta.data) <- row_names
+		mx$PropRatio <- log2(mx$PropRatio)
+		mx$PropRatio[which(is.nan(mx$PropRatio))] <- NA
+		mx$PropRatio[which(mx$PropRatio > max_log2fc)] <- max_log2fc
+		mx$PropRatio[which(mx$PropRatio < -max_log2fc)] <- -max_log2fc
+		mx$PropRatio <- -mx$PropRatio
+
+		# p < 0.1
+		mx$PropRatio_Signif <- mx$PropRatio
+		mx$PropRatio_Signif[which(mx$P.Value >= 0.1 | is.na(mx$PropRatio))] <- NA
+		mx_500 <- subset(mx, downsample = 500)
+		mx_reduction <- "wnn.umap"
+		for (plot_limit in c(2, 3, max_log2fc)) {
+			if (sum(!is.na(mx_500$PropRatio)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"))
+				ggsave(filename = paste0(mx_name, "-PropRatio-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+			if (sum(!is.na(mx_500$PropRatio_Signif)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio_Signif', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"), subtitle = 'p < 0.10')
+				ggsave(filename = paste0(mx_name, "-PropRatio_Signif_0.1-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+
+		# p < 0.05
+		mx_500$PropRatio_Signif[which(mx_500$P.Value >= 0.05 | is.na(mx_500$PropRatio))] <- NA
+		for (plot_limit in c(2, 3, max_log2fc)) {
+			if (sum(!is.na(mx_500$PropRatio_Signif)) >= 10) {
+				FeaturePlot(mx_500, features = 'PropRatio_Signif', reduction = mx_reduction) +
+					scale_color_gradient2(low = "#003FAC", mid = "#E5D6B1", high = "#BB0000", limits = c(-plot_limit, plot_limit)) +
+					labs(title = paste('DA:', y), color = paste0("Ratio(", mx_transform, ")"), subtitle = 'p < 0.05')
+				ggsave(filename = paste0(mx_name, "-PropRatio_Signif_0.05-", mx_reduction, "-max", plot_limit, ".eps"), width = 5, height = 4)
+			}
+		}
+	}
+
+	setwd("../")
+```
+
+

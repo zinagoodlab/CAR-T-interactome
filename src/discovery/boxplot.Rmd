@@ -1,0 +1,1086 @@
+---
+title: "Untitled"
+author: "Kelvin Mo"
+date: "2024-07-18"
+output: html_document
+---
+
+```{r}
+rm(list = ls())
+gc()
+
+library(dplyr)
+library(ggplot2)
+```
+
+```{r}
+list <- c("Percent_asDC",
+          "Percent_asDC_by_T",
+          "Percent_B_intermediate",
+          "Percent_B_intermediate_by_T",
+          "Percent_B_memory",
+          "Percent_B_memory_by_T",
+          "Percent_B_naive",
+          "Percent_B_naive_by_T",
+          "Percent_B_other",
+          "Percent_B_other_by_T",
+          "Percent_Myeloid_other",
+          "Percent_Myeloid_other_by_T",
+          "Percent_CD14_mono",
+          "Percent_CD14_mono_by_T",
+          "Percent_CD16_mono",
+          "Percent_CD16_mono_by_T",
+          "Percent_CD4_T_effector",
+          "Percent_CD4_T_effector_by_T",
+          "Percent_CD4_T_naive",
+          "Percent_CD4_T_naive_by_T",
+          "Percent_CD4_T_terminal_effector",
+          "Percent_CD4_T_terminal_effector_by_T",
+          "Percent_CD4_Tcm",
+          "Percent_CD4_Tcm_by_T",
+          "Percent_CD4_Tem",
+          "Percent_CD4_Tem_by_T",
+          "Percent_CD8_T_effector",
+          "Percent_CD8_T_effector_by_T",
+          "Percent_CD8_T_naive",
+          "Percent_CD8_T_naive_by_T",
+          "Percent_CD8_T_terminal_effector",
+          "Percent_CD8_T_terminal_effector_by_T",
+          "Percent_CD8_Tcm",
+          "Percent_CD8_Tcm_by_T",
+          "Percent_CD8_Tem",
+          "Percent_CD8_Tem_by_T",
+          "Percent_cDC2",
+          "Percent_cDC2_by_T",
+          "Percent_gd_T",
+          "Percent_gd_T_by_T",
+          "Percent_pDC",
+          "Percent_pDC_by_T",
+          "Percent_Plasmablast",
+          "Percent_Plasmablast_by_T",
+          "Percent_T_exhausted",
+          "Percent_T_exhausted_by_T",
+          "Percent_T_MAIT",
+          "Percent_T_MAIT_by_T",
+          "Percent_T_other",
+          "Percent_T_other_by_T",
+          "Percent_TAM",
+          "Percent_TAM_by_T",
+          "Percent_Tfh",
+          "Percent_Tfh_by_T",
+          "Percent_Th1",
+          "Percent_Th1_by_T",
+          "Percent_Th1_Th17",
+          "Percent_Th1_Th17_by_T",
+          "Percent_Th17",
+          "Percent_Th17_by_T",
+          "Percent_Th2",
+          "Percent_Th2_by_T",
+          "Percent_Treg",
+          "Percent_Treg_by_T",
+          "Percent_Cluster0",
+          "Percent_Cluster1",
+          "Percent_Cluster2",
+          "Percent_Cluster3",
+          "Percent_Cluster4",
+          "Percent_Cluster5",
+          "Percent_Cluster6",
+          "Percent_Cluster7",
+          "Percent_Cluster8",
+          "Percent_Cluster9",
+          "Percent_Myeloid",
+          "Percent_B",
+          "Percent_CAR_Tcon_by_All",
+          "Percent_CAR_Tcon_by_T",
+          "Percent_CAR_Treg_by_All",
+          "Percent_CAR_Treg_by_T",
+          "Percent_Treg",
+          "Percent_Treg_by_T",
+          "Percent_Tconv",
+          "Percent_Tconv_by_T"
+
+  )
+```
+
+
+
+```{r}
+#saveRDS(df2, "Desktop/FNA_FinalObject.rds")
+df2 <- readRDS("FNA/FNA_FinalObject.rds")
+```
+
+```{r}
+patient_summary <- df2@meta.data %>%
+  group_by(patient_id) %>%
+  summarise(
+    Age = dplyr::first(Age),
+    Sex = dplyr::first(Sex),
+    Disease_type = dplyr::first(Disease_type),
+    construct = dplyr::first(construct),
+    High_LDH = dplyr::first(High_LDH.x),
+    Pre_LD_LDH = dplyr::first(Pre_LD_LDH),
+    Response_30d = dplyr::first(Response_30d),  
+    Response_3m = dplyr::first(Response_3m),    
+    Response_6m = dplyr::first(Response_6m),   
+    Max_CRS = dplyr::first(Max_CRS),
+    Max_ICANS = dplyr::first(Max_ICANS),
+    CMV_Pre_Ab = dplyr::first(CMV_Pre_Ab),
+    CMV_PCR_First_28 = dplyr::first(CMV_PCR_First_28),
+    CMV_PCR_D29_to_D180 = dplyr::first(CMV_PCR_D29_to_D180),
+    Percent_CAR_Tcon_by_All = sum(interactome_group2 == "CAR+ Tcon") / n() * 100, 
+    Percent_CAR_Tcon_by_CAR = sum(interactome_group2 == "CAR+ Tcon")/ sum(interactome_group2 == "CAR+ Tcon" | interactome_group2 == "CAR+ Treg" ) * 100,
+    Percent_CAR_Tcon_by_T = sum(interactome_group2 == "CAR+ Tcon")/ sum(cell_type == "T cell") * 100,
+    Percent_CAR_Treg_by_All = sum(interactome_group2 == "CAR+ Treg") / n() * 100,
+    Percent_CAR_Treg_by_CAR = sum(interactome_group2 == "CAR+ Treg")/ sum(interactome_group2 == "CAR+ Tcon" | interactome_group2 == "CAR+ Treg" ) * 100,
+    Percent_CAR_Treg_by_T = sum(interactome_group2 == "CAR+ Treg")/ sum(cell_type == "T cell") * 100,
+    Number_CART = n(),
+    Percent_Cluster0 = sum(seurat_clusters == "0") / n() * 100,
+    Percent_Cluster1 = sum(seurat_clusters == "1") / n() * 100,
+    Percent_Cluster2 = sum(seurat_clusters == "2") / n() * 100,
+    Percent_Cluster3 = sum(seurat_clusters == "3") / n() * 100,
+    Percent_Cluster4 = sum(seurat_clusters == "4") / n() * 100,
+    Percent_Cluster5 = sum(seurat_clusters == "5") / n() * 100,
+    Percent_Cluster6 = sum(seurat_clusters == "6") / n() * 100,
+    Percent_Cluster7 = sum(seurat_clusters == "7") / n() * 100,
+    Percent_Cluster8 = sum(seurat_clusters == "8") / n() * 100,
+    Percent_Cluster9 = sum(seurat_clusters == "9") / n() * 100,
+    Percent_asDC = sum(cell_subset == "asDC") / n() * 100,
+    Percent_B_intermediate = sum(cell_subset == "B intermediate") / n() * 100,
+    Percent_B_memory = sum(cell_subset == "B memory") / n() * 100,
+    Percent_B_naive = sum(cell_subset == "B naive") / n() * 100,
+    Percent_Myeloid_other = sum(cell_subset == "CAR-iDC") / n() * 100,
+    Percent_CD14_mono = sum(cell_subset == "CD14 mono") / n() * 100,
+    Percent_CD16_mono = sum(cell_subset == "CD16 mono") / n() * 100,
+    Percent_B_other = sum(cell_subset == "B other") / n() * 100,
+    Percent_CD4_T_effector = sum(cell_subset == "CD4+ T effector") / n() * 100,
+    Percent_CD4_T_naive = sum(cell_subset == "CD4+ T naive") / n() * 100,
+    Percent_CD4_T_terminal_effector = sum(cell_subset == "CD4+ T terminal effector") / n() * 100,
+    Percent_CD4_Tcm = sum(cell_subset == "CD4+ Tcm") / n() * 100,
+    Percent_CD4_Tem = sum(cell_subset == "CD4+ Tem") / n() * 100,
+    Percent_CD8_T_effector = sum(cell_subset == "CD8+ T effector") / n() * 100,
+    Percent_CD8_T_naive = sum(cell_subset == "CD8+ T naive") / n() * 100,
+    Percent_CD8_T_terminal_effector = sum(cell_subset == "CD8+ T terminal effector") / n() * 100,
+    Percent_CD8_Tcm = sum(cell_subset == "CD8+ Tcm") / n() * 100,
+    Percent_CD8_Tem = sum(cell_subset == "CD8+ Tem") / n() * 100,
+    Percent_cDC2 = sum(cell_subset == "cDC2") / n() * 100,
+    Percent_gd_T = sum(cell_subset == "gd T") / n() * 100,
+    Percent_pDC = sum(cell_subset == "pDC") / n() * 100,
+    Percent_Plasmablast = sum(cell_subset == "Plasmablast") / n() * 100,
+    Percent_T_exhausted = sum(cell_subset == "T exhausted") / n() * 100,
+    Percent_T_MAIT = sum(cell_subset == "T MAIT") / n() * 100,
+    Percent_T_other = sum(cell_subset == "T other") / n() * 100,
+    Percent_TAM = sum(cell_subset == "TAM") / n() * 100,
+    Percent_Tfh = sum(cell_subset == "Tfh") / n() * 100,
+    Percent_Th1 = sum(cell_subset == "Th1") / n() * 100,
+    Percent_Th1_Th17 = sum(cell_subset == "Th1 Th17") / n() * 100,
+    Percent_Th17 = sum(cell_subset == "Th17") / n() * 100,
+    Percent_Th2 = sum(cell_subset == "Th2") / n() * 100,
+    Percent_asDC_by_T = sum(cell_subset == 'asDC') / sum(cell_type == "T cell") * 100,
+    Percent_B_intermediate_by_T = sum(cell_subset == 'B intermediate') / sum(cell_type == "T cell") * 100,
+    Percent_B_memory_by_T = sum(cell_subset == 'B memory') / sum(cell_type == "T cell") * 100,
+    Percent_B_naive_by_T = sum(cell_subset == 'B naive') / sum(cell_type == "T cell") * 100,
+    Percent_Myeloid_other_by_T = sum(cell_subset == 'CAR-iDC') / sum(cell_type == "T cell") * 100,
+    Percent_CD14_mono_by_T = sum(cell_subset == 'CD14 mono') / sum(cell_type == "T cell") * 100,
+    Percent_CD16_mono_by_T = sum(cell_subset == 'CD16 mono') / sum(cell_type == "T cell") * 100,
+    Percent_B_other_by_T = sum(cell_subset == 'B other') / sum(cell_type == "T cell") * 100,
+    Percent_CD4_T_effector_by_T = sum(cell_subset == 'CD4+ T effector') / sum(cell_type == "T cell") * 100,
+    Percent_CD4_T_naive_by_T = sum(cell_subset == 'CD4+ T naive') / sum(cell_type == "T cell") * 100,
+    Percent_CD4_T_terminal_effector_by_T = sum(cell_subset == 'CD4+ T terminal effector') / sum(cell_type == "T cell") * 100,
+    Percent_CD4_Tcm_by_T = sum(cell_subset == 'CD4+ Tcm') / sum(cell_type == "T cell") * 100,
+    Percent_CD4_Tem_by_T = sum(cell_subset == 'CD4+ Tem') / sum(cell_type == "T cell") * 100,
+    Percent_CD8_T_effector_by_T = sum(cell_subset == 'CD8+ T effector') / sum(cell_type == "T cell") * 100,
+    Percent_CD8_T_naive_by_T = sum(cell_subset == 'CD8+ T naive') / sum(cell_type == "T cell") * 100,
+    Percent_CD8_T_terminal_effector_by_T = sum(cell_subset == 'CD8+ T terminal effector') / sum(cell_type == "T cell") * 100,
+    Percent_CD8_Tcm_by_T = sum(cell_subset == 'CD8+ Tcm') / sum(cell_type == "T cell") * 100,
+    Percent_CD8_Tem_by_T = sum(cell_subset == 'CD8+ Tem') / sum(cell_type == "T cell") * 100,
+    Percent_cDC2_by_T = sum(cell_subset == 'cDC2') / sum(cell_type == "T cell") * 100,
+    Percent_gd_T_by_T = sum(cell_subset == 'gd T') / sum(cell_type == "T cell") * 100,
+    Percent_pDC_by_T = sum(cell_subset == 'pDC') / sum(cell_type == "T cell") * 100,
+    Percent_Plasmablast_by_T = sum(cell_subset == 'Plasmablast') / sum(cell_type == "T cell") * 100,
+    Percent_T_exhausted_by_T = sum(cell_subset == 'T exhausted') / sum(cell_type == "T cell") * 100,
+    Percent_T_MAIT_by_T = sum(cell_subset == 'T MAIT') / sum(cell_type == "T cell") * 100,
+    Percent_T_other_by_T = sum(cell_subset == 'T other') / sum(cell_type == "T cell") * 100,
+    Percent_TAM_by_T = sum(cell_subset == 'TAM') / sum(cell_type == "T cell") * 100,
+    Percent_Tfh_by_T = sum(cell_subset == 'Tfh') / sum(cell_type == "T cell") * 100,
+    Percent_Th1_by_T = sum(cell_subset == 'Th1') / sum(cell_type == "T cell") * 100,
+    Percent_Th1_Th17_by_T = sum(cell_subset == 'Th1 Th17') / sum(cell_type == "T cell") * 100,
+    Percent_Th17_by_T = sum(cell_subset == 'Th17') / sum(cell_type == "T cell") * 100,
+    Percent_Th2_by_T = sum(cell_subset == 'Th2') / sum(cell_type == "T cell") * 100,
+    Percent_Treg = sum(interactome_group == "Treg") / n() * 100,
+    Percent_Treg_by_T = sum(interactome_group == "Treg") / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_Tconv = sum(interactome_group == "Tconv") / n() * 100,
+    Percent_Tconv_by_T = sum(interactome_group == "Tconv") / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_B = sum(interactome_group == "B cell") / n() * 100,
+    Percent_Myeloid = sum(interactome_group == "Myeloid/DC") / n() * 100,
+    ratio = Percent_CAR_Treg_by_All/Percent_CAR_Tcon_by_All
+  )
+```
+
+
+
+
+
+```{r}
+patient_summary$Max_CRS[which(patient_summary$Max_CRS == 0)] <- "0-1"
+patient_summary$Max_CRS[which(patient_summary$Max_CRS == 1)] <- "0-1"
+patient_summary$Max_CRS[which(patient_summary$Max_CRS == 2)] <- "2-4"
+
+patient_summary$Max_ICANS[which(patient_summary$Max_ICANS == 0)] <- "0-1"
+patient_summary$Max_ICANS[which(patient_summary$Max_ICANS == 1)] <- "0-1"
+patient_summary$Max_ICANS[which(patient_summary$Max_ICANS == 2)] <- "2-4"
+patient_summary$Max_ICANS[which(patient_summary$Max_ICANS == 3)] <- "2-4"
+```
+
+```{r}
+axicel <- subset(patient_summary, subset = construct == "Axi-cel")
+bispecific <- subset(patient_summary, subset = construct == "Bispecific CD19/22")
+```
+
+## 30 DAYS
+```{r}
+results_df <- data.frame(Subset = character(), Both = numeric(), Axicel = numeric(), Bispecific = numeric(), stringsAsFactors = FALSE)
+
+for (subset in list) {
+
+  wilcox1 <- wilcox.test(patient_summary[[subset]] ~ patient_summary$Response_30d)
+  pv1 <- wilcox1$p.value
+  wilcox2 <- wilcox.test(axicel[[subset]] ~ axicel$Response_30d)
+  pv2 <- wilcox2$p.value
+  wilcox3 <- wilcox.test(bispecific[[subset]] ~ bispecific$Response_30d)
+  pv3 <- wilcox3$p.value
+  
+  counts <- patient_summary %>%
+    group_by(Response_30d) %>%
+    summarise(count = n())
+  
+  labels <- c("OR (n=13)", "NR (n=5)")
+  patient_summary$Response_30d <- factor(patient_summary$Response_30d, levels = c("OR", "NR"))
+  
+  p <- ggplot(patient_summary, aes_string(x = "Response_30d", y = subset, fill = "Response_30d")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels1 <- c("OR (n=9)", "NR (n=3)")
+  axicel$Response_30d <- factor(axicel$Response_30d, levels = c("OR", "NR"))
+  
+  p1 <- ggplot(axicel, aes_string(x = "Response_30d", y = subset, fill = "Response_30d")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels1) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels2 <- c("OR (n=4)", "NR (n=3)")
+  bispecific$Response_30d <- factor(bispecific$Response_30d, levels = c("OR", "NR"))
+  
+  p2 <- ggplot(bispecific, aes_string(x = "Response_30d", y = subset, fill = "Response_30d")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels2) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  name <- sub("Percent_", "", subset)
+  ggsave(paste0("Boxplot2.0/All/30d/", name, "-response30d.eps"), p, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/All/30d/", name, "-Axicel-response30d.eps"), p1, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/All/30d/", name,"-Bispecific-response30d.eps"), p2, dpi=600, width = 2.5, height=4.5, bg = "white")
+  
+  new_row <- data.frame(Subset = name, Both = pv1, Axicel = pv2, Bispecific = pv3)
+  results_df <- rbind(results_df, new_row)
+}
+
+write.csv(results_df, file= "Boxplot2.0/FNA-30d-P_values.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
+## 3 MONTHS
+```{r}
+
+results_df <- data.frame(Subset = character(), Both = numeric(), Axicel = numeric(), Bispecific = numeric(), stringsAsFactors = FALSE)
+
+for (subset in list) {
+
+  wilcox1 <- wilcox.test(patient_summary[[subset]] ~ patient_summary$Response_3m)
+  pv1 <- wilcox1$p.value
+  wilcox2 <- wilcox.test(axicel[[subset]] ~ axicel$Response_3m)
+  pv2 <- wilcox2$p.value
+  wilcox3 <- wilcox.test(bispecific[[subset]] ~ bispecific$Response_3m)
+  pv3 <- wilcox3$p.value
+  
+  counts <- patient_summary %>%
+    group_by(Response_3m) %>%
+    summarise(count = n())
+  
+  labels <- c("DR (n=12)", "NDR (n=6)")
+  patient_summary$Response_3m <- factor(patient_summary$Response_3m, levels = c("DR", "NDR"))
+  
+  p <- ggplot(patient_summary, aes_string(x = "Response_3m", y = subset, fill = "Response_3m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels1 <- c("DR (n=7)", "NDR (n=4)")
+  axicel$Response_3m <- factor(axicel$Response_3m, levels = c("DR", "NDR"))
+  
+  p1 <- ggplot(axicel, aes_string(x = "Response_3m", y = subset, fill = "Response_3m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels1) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels2 <- c("DR (n=5)", "NDR (n=2)")
+  bispecific$Response_3m <- factor(bispecific$Response_3m, levels = c("DR", "NDR"))
+  
+  p2 <- ggplot(bispecific, aes_string(x = "Response_3m", y = subset, fill = "Response_3m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels2) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  name <- sub("Percent_", "", subset)
+  ggsave(paste0("Boxplot2.0/All/3m/", name, "-response3m.eps"), p, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/All/3m/", name, "-Axicel-response3m.eps"), p1, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/All/3m/", name,"-Bispecific-response3m.eps"), p2, dpi=600, width = 2.5, height=4.5, bg = "white")
+  
+  new_row <- data.frame(Subset = name, Both = pv1, Axicel = pv2, Bispecific = pv3)
+  results_df <- rbind(results_df, new_row)
+}
+
+write.csv(results_df, file= "Boxplot2.0/FNA-3m-P_values.csv", row.names = FALSE)
+
+```
+
+
+
+
+
+
+
+
+## 6 MONTHS
+```{r}
+
+results_df <- data.frame(Subset = character(), Both = numeric(), Axicel = numeric(), Bispecific = numeric(), stringsAsFactors = FALSE)
+
+for (subset in list) {
+
+  wilcox1 <- wilcox.test(patient_summary[[subset]] ~ patient_summary$Response_6m)
+  pv1 <- wilcox1$p.value
+  wilcox2 <- wilcox.test(axicel[[subset]] ~ axicel$Response_6m)
+  pv2 <- wilcox2$p.value
+  wilcox3 <- wilcox.test(bispecific[[subset]] ~ bispecific$Response_6m)
+  pv3 <- wilcox3$p.value
+  
+  counts <- patient_summary %>%
+    group_by(Response_6m) %>%
+    summarise(count = n())
+  
+  labels <- c("OR (n=9)", "NR (n=9)")
+  patient_summary$Response_6m <- factor(patient_summary$Response_6m, levels = c("DR", "NDR"))
+  
+  p <- ggplot(patient_summary, aes_string(x = "Response_6m", y = subset, fill = "Response_6m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels1 <- c("OR (n=7)", "NR (n=4)")
+  axicel$Response_6m <- factor(axicel$Response_6m, levels = c("DR", "NDR"))
+  
+  p1 <- ggplot(axicel, aes_string(x = "Response_6m", y = subset, fill = "Response_6m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels1) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels2 <- c("OR (n=4)", "NR (n=3)")
+  bispecific$Response_6m <- factor(bispecific$Response_6m, levels = c("DR", "NDR"))
+  
+  p2 <- ggplot(bispecific, aes_string(x = "Response_6m", y = subset, fill = "Response_6m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels2) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  name <- sub("Percent_", "", subset)
+  ggsave(paste0("Boxplot2.0/All/6m/", name, "-response6m.eps"), p, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/All/6m/", name, "-Axicel-response6m.eps"), p1, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/All/6m/", name,"-Bispecific-response6m.eps"), p2, dpi=600, width = 2.5, height=4.5, bg = "white")
+  
+  new_row <- data.frame(Subset = name, Both = pv1, Axicel = pv2, Bispecific = pv3)
+  results_df <- rbind(results_df, new_row)
+}
+
+write.csv(results_df, file= "Boxplot2.0/FNA-6m-P_values.csv", row.names = FALSE)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# CAR+
+```{r}
+list_CAR <- c("Percent_Cluster1", "Percent_Cluster2", "Percent_Cluster4", "Percent_Cluster5", "Percent_CD4_T_effector",
+          "Percent_CD4_T_effector_by_T", "Percent_CD4_T_effector_by_CAR", "Percent_CD4_T_naive", "Percent_CD4_T_naive_by_T",
+          "Percent_CD4_T_naive_by_CAR", "Percent_CD4_T_terminal_effector", "Percent_CD4_T_terminal_effector_by_T",
+          "Percent_CD4_T_terminal_effector_by_CAR", "Percent_CD4_Tcm", "Percent_CD4_Tcm_by_T", "Percent_CD4_Tcm_by_CAR",
+          "Percent_CD4_Tem", "Percent_CD4_Tem_by_T", "Percent_CD4_Tem_by_CAR", "Percent_CD8_T_effector",
+          "Percent_CD8_T_effector_by_T", "Percent_CD8_T_effector_by_CAR", "Percent_CD8_T_naive", "Percent_CD8_T_naive_by_T",
+          "Percent_CD8_T_naive_by_CAR", "Percent_CD8_T_terminal_effector", "Percent_CD8_T_terminal_effector_by_T",
+          "Percent_CD8_T_terminal_effector_by_CAR", "Percent_CD8_Tcm", "Percent_CD8_Tcm_by_T", "Percent_CD8_Tcm_by_CAR",
+          "Percent_CD8_Tem", "Percent_CD8_Tem_by_T", "Percent_CD8_Tem_by_CAR", "Percent_gd_T", "Percent_gd_T_by_T",
+          "Percent_gd_T_by_CAR", "Percent_T_exhausted", "Percent_T_exhausted_by_T", "Percent_T_exhausted_by_CAR",
+          "Percent_T_MAIT", "Percent_T_MAIT_by_T", "Percent_T_MAIT_by_CAR", "Percent_T_other", "Percent_T_other_by_T",
+          "Percent_T_other_by_CAR", "Percent_Tfh", "Percent_Tfh_by_T", "Percent_Tfh_by_CAR", "Percent_Th1",
+          "Percent_Th1_by_T", "Percent_Th1_by_CAR", "Percent_Th1_Th17", "Percent_Th1_Th17_by_T", "Percent_Th1_Th17_by_CAR",
+          "Percent_Th17", "Percent_Th17_by_T", "Percent_Th17_by_CAR", "Percent_Th2", "Percent_Th2_by_T", "Percent_Th2",
+          "Percent_Treg", "Percent_Treg_by_T", "Percent_Treg_by_CAR", "Percent_Tconv", "Percent_Tconv_by_T", "Percent_Tconv_by_CAR", "Number_CART", "ratio1", "ratio_T", "ratio_CAR", "Pre_LD_LDH")
+```
+
+
+
+```{r}
+patient_summary_CAR <- df2@meta.data %>%
+  group_by(patient_id) %>%
+  summarise(
+    Age = dplyr::first(Age),
+    Sex = dplyr::first(Sex),
+    construct = dplyr::first(construct),
+    Disease_type = dplyr::first(Disease_type),
+    High_LDH = dplyr::first(High_LDH.x),
+    Pre_LD_LDH = dplyr::first(Pre_LD_LDH),
+    Response_30d = dplyr::first(Response_30d),  
+    Response_3m = dplyr::first(Response_3m),    
+    Response_6m = dplyr::first(Response_6m),   
+    Max_CRS = dplyr::first(Max_CRS),
+    Max_ICANS = dplyr::first(Max_ICANS),
+    CMV_Pre_Ab = dplyr::first(CMV_Pre_Ab),
+    CMV_PCR_First_28 = dplyr::first(CMV_PCR_First_28),
+    CMV_PCR_D29_to_D180 = dplyr::first(CMV_PCR_D29_to_D180),
+    Percent_Cluster1 = sum(seurat_clusters == "1" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_Cluster2 = sum(seurat_clusters == "2" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_Cluster4 = sum(seurat_clusters == "4" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_Cluster5 = sum(seurat_clusters == "5" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_CD4_T_effector = sum(cell_subset == "CD4+ T effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_CD4_T_effector_by_T = sum(cell_subset == "CD4+ T effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_CD4_T_effector_by_CAR = sum(cell_subset == "CD4+ T effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_CD4_T_naive = sum(cell_subset == "CD4+ T naive" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_CD4_T_naive_by_T = sum(cell_subset == "CD4+ T naive" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_CD4_T_naive_by_CAR = sum(cell_subset == "CD4+ T naive" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_CD4_T_terminal_effector = sum(cell_subset == "CD4+ T terminal effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_CD4_T_terminal_effector_by_T = sum(cell_subset == "CD4+ T terminal effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_CD4_T_terminal_effector_by_CAR = sum(cell_subset == "CD4+ T terminal effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_CD4_Tcm = sum(cell_subset == "CD4+ Tcm" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_CD4_Tcm_by_T = sum(cell_subset == "CD4+ Tcm" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_CD4_Tcm_by_CAR = sum(cell_subset == "CD4+ Tcm" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_CD4_Tem = sum(cell_subset == "CD4+ Tem" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_CD4_Tem_by_T = sum(cell_subset == "CD4+ Tem" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_CD4_Tem_by_CAR = sum(cell_subset == "CD4+ Tem" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_CD8_T_effector = sum(cell_subset == "CD8+ T effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_CD8_T_effector_by_T = sum(cell_subset == "CD8+ T effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_CD8_T_effector_by_CAR = sum(cell_subset == "CD8+ T effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_CD8_T_naive = sum(cell_subset == "CD8+ T naive" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_CD8_T_naive_by_T = sum(cell_subset == "CD8+ T naive" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_CD8_T_naive_by_CAR = sum(cell_subset == "CD8+ T naive" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_CD8_T_terminal_effector = sum(cell_subset == "CD8+ T terminal effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_CD8_T_terminal_effector_by_T = sum(cell_subset == "CD8+ T terminal effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_CD8_T_terminal_effector_by_CAR = sum(cell_subset == "CD8+ T terminal effector" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_CD8_Tcm = sum(cell_subset == "CD8+ Tcm" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_CD8_Tcm_by_T = sum(cell_subset == "CD8+ Tcm" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_CD8_Tcm_by_CAR = sum(cell_subset == "CD8+ Tcm" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_CD8_Tem = sum(cell_subset == "CD8+ Tem" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_CD8_Tem_by_T = sum(cell_subset == "CD8+ Tem" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_CD8_Tem_by_CAR = sum(cell_subset == "CD8+ Tem" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_gd_T = sum(cell_subset == "gd T" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_gd_T_by_T = sum(cell_subset == "gd T" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_gd_T_by_CAR = sum(cell_subset == "gd T" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_T_exhausted = sum(cell_subset == "T exhausted" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_T_exhausted_by_T = sum(cell_subset == "T exhausted" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_T_exhausted_by_CAR = sum(cell_subset == "T exhausted" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_T_MAIT = sum(cell_subset == "T MAIT" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_T_MAIT_by_T = sum(cell_subset == "T MAIT" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_T_MAIT_by_CAR = sum(cell_subset == "T MAIT" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_T_other = sum(cell_subset == "T other" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_T_other_by_T = sum(cell_subset == "T other" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_T_other_by_CAR = sum(cell_subset == "T other" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_Tfh = sum(cell_subset == "Tfh" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_Tfh_by_T = sum(cell_subset == "Tfh" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_Tfh_by_CAR = sum(cell_subset == "Tfh" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_Th1 = sum(cell_subset == "Th1" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_Th1_by_T = sum(cell_subset == "Th1" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_Th1_by_CAR = sum(cell_subset == "Th1" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_Th1_Th17 = sum(cell_subset == "Th1 Th17" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_Th1_Th17_by_T = sum(cell_subset == "Th1 Th17" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_Th1_Th17_by_CAR = sum(cell_subset == "Th1 Th17" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_Th17 = sum(cell_subset == "Th17" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_Th17_by_T = sum(cell_subset == "Th17" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_Th17_by_CAR = sum(cell_subset == "Th17" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_Th2 = sum(cell_subset == "Th2" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_Th2_by_T = sum(cell_subset == "Th2" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_Th2 = sum(cell_subset == "Th2" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_Treg = sum(cell_subset == "Treg" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / n() * 100,
+    Percent_Treg_by_T = sum(cell_subset == "Treg" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_Treg_by_CAR = sum(cell_subset == "Treg" & (interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon")) / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Percent_Tconv = sum(interactome_group2 == "CAR+ Tcon") / n() * 100,
+    Percent_Tconv_by_T = sum(interactome_group2 == "CAR+ Tcon") / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100,
+    Percent_Tconv_by_CAR = sum(interactome_group2 == "CAR+ Tcon") / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100,
+    Number_CART = sum(interactome_group2 == "CAR+ Tcon" | interactome_group2 == "CAR+ Treg" ),
+    Percent_CART = sum(interactome_group2 == "CAR+ Tcon" | interactome_group2 == "CAR+ Treg" ) / n() * 100,
+    ratio1 = (sum(interactome_group2 == "CAR+ Treg") / n() * 100)/(sum(interactome_group2 == "CAR+ Tcon") / n() * 100),
+    ratio_T = (sum(interactome_group2 == "CAR+ Treg") / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100)/(sum(interactome_group2 == "CAR+ Tcon") / sum(interactome_group == "Treg" | interactome_group == "Tconv") * 100),
+    ratio_CAR = (sum(interactome_group2 == "CAR+ Treg") / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100)/(sum(interactome_group2 == "CAR+ Tcon") / sum(interactome_group2 == "CAR+ Treg" | interactome_group2 == "CAR+ Tcon") * 100)
+  )
+
+patient_summary_CAR$Max_CRS[which(patient_summary_CAR$Max_CRS == 0)] <- "0-1"
+patient_summary_CAR$Max_CRS[which(patient_summary_CAR$Max_CRS == 1)] <- "0-1"
+patient_summary_CAR$Max_CRS[which(patient_summary_CAR$Max_CRS == 2)] <- "2-4"
+
+patient_summary_CAR$Max_ICANS[which(patient_summary_CAR$Max_ICANS == 0)] <- "0-1"
+patient_summary_CAR$Max_ICANS[which(patient_summary_CAR$Max_ICANS == 1)] <- "0-1"
+patient_summary_CAR$Max_ICANS[which(patient_summary_CAR$Max_ICANS == 2)] <- "2-4"
+patient_summary_CAR$Max_ICANS[which(patient_summary_CAR$Max_ICANS == 3)] <- "2-4"
+
+#patient_summary_CAR <- patient_summary_CAR %>%
+  #filter(Number_CART >= 10)
+```
+
+
+```{r}
+axicel_CAR <- subset(patient_summary_CAR, subset = construct == "Axi-cel")
+bispecific_CAR <- subset(patient_summary_CAR, subset = construct == "Bispecific CD19/22")
+```
+
+
+
+
+
+## 30 DAYS
+```{r}
+CAR_results_df <- data.frame(Subset = character(), Both = numeric(), Axicel = numeric(), Bispecific = numeric(), stringsAsFactors = FALSE)
+
+for (subset in list_CAR) {
+
+  wilcox1 <- wilcox.test(patient_summary_CAR[[subset]] ~ patient_summary_CAR$Response_30d)
+  pv1 <- wilcox1$p.value
+  wilcox2 <- wilcox.test(axicel_CAR[[subset]] ~ axicel_CAR$Response_30d)
+  pv2 <- wilcox2$p.value
+  wilcox3 <- wilcox.test(bispecific_CAR[[subset]] ~ bispecific_CAR$Response_30d)
+  pv3 <- wilcox3$p.value
+  
+  counts <- patient_summary_CAR %>%
+    group_by(Response_30d) %>%
+    summarise(count = n())
+  
+  labels <- c("OR (n=10)", "NR (n=4)")
+  patient_summary_CAR$Response_30d <- factor(patient_summary_CAR$Response_30d, levels = c("OR", "NR"))
+  
+  p <- ggplot(patient_summary_CAR, aes_string(x = "Response_30d", y = subset, fill = "Response_30d")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels1 <- c("OR (n=6)", "NR (n=1)")
+  axicel_CAR$Response_30d <- factor(axicel_CAR$Response_30d, levels = c("OR", "NR"))
+  
+  p1 <- ggplot(axicel_CAR, aes_string(x = "Response_30d", y = subset, fill = "Response_30d")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels1) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels2 <- c("OR (n=4)", "NR (n=3)")
+  bispecific_CAR$Response_30d <- factor(bispecific_CAR$Response_30d, levels = c("OR", "NR"))
+  
+  p2 <- ggplot(bispecific_CAR, aes_string(x = "Response_30d", y = subset, fill = "Response_30d")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels2) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  name <- sub("Percent_", "", subset)
+  ggsave(paste0("Boxplot2.0/CAR+/30d/", name, "-response30d.eps"), p, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/CAR+/30d/", name, "-Axicel-response30d.eps"), p1, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/CAR+/30d/", name,"-Bispecific-response30d.eps"), p2, dpi=600, width = 2.5, height=4.5, bg = "white")
+  
+  new_row <- data.frame(Subset = name, Both = pv1, Axicel = pv2, Bispecific = pv3)
+  CAR_results_df <- rbind(CAR_results_df, new_row)
+}
+
+write.csv(CAR_results_df, file= "Boxplot2.0/FNA-CAR-30d-P_values.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
+
+## 3 MONTHS
+```{r}
+CAR_results_df <- data.frame(Subset = character(), Both = numeric(), Axicel = numeric(), Bispecific = numeric(), stringsAsFactors = FALSE)
+
+for (subset in list_CAR) {
+
+  wilcox1 <- wilcox.test(patient_summary_CAR[[subset]] ~ patient_summary_CAR$Response_3m)
+  pv1 <- wilcox1$p.value
+  wilcox2 <- wilcox.test(axicel_CAR[[subset]] ~ axicel_CAR$Response_3m)
+  pv2 <- wilcox2$p.value
+  wilcox3 <- wilcox.test(bispecific_CAR[[subset]] ~ bispecific_CAR$Response_3m)
+  pv3 <- wilcox3$p.value
+  
+  counts <- patient_summary_CAR %>%
+    group_by(Response_3m) %>%
+    summarise(count = n())
+  
+  labels <- c("DR (n=9)", "NDR (n=5)")
+  patient_summary_CAR$Response_3m <- factor(patient_summary_CAR$Response_3m, levels = c("DR", "NDR"))
+  
+  p <- ggplot(patient_summary_CAR, aes_string(x = "Response_3m", y = subset, fill = "Response_3m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels1 <- c("DR (n=4)", "NDR (n=3)")
+  axicel_CAR$Response_3m <- factor(axicel_CAR$Response_3m, levels = c("DR", "NDR"))
+  
+  p1 <- ggplot(axicel_CAR, aes_string(x = "Response_3m", y = subset, fill = "Response_3m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels1) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels2 <- c("DR (n=5)", "NDR (n=2)")
+  bispecific_CAR$Response_3m <- factor(bispecific_CAR$Response_3m, levels = c("DR", "NDR"))
+  
+  p2 <- ggplot(bispecific_CAR, aes_string(x = "Response_3m", y = subset, fill = "Response_3m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels2) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  name <- sub("Percent_", "", subset)
+  ggsave(paste0("Boxplot2.0/CAR+/3m/", name, "-response3m.eps"), p, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/CAR+/3m/", name, "-Axicel-response3m.eps"), p1, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/CAR+/3m/", name,"-Bispecific-response3m.eps"), p2, dpi=600, width = 2.5, height=4.5, bg = "white")
+  
+  new_row <- data.frame(Subset = name, Both = pv1, Axicel = pv2, Bispecific = pv3)
+  CAR_results_df <- rbind(CAR_results_df, new_row)
+}
+
+write.csv(CAR_results_df, file= "Boxplot2.0/FNA-CAR-3m-P_values.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## 6 MONTHS
+```{r}
+CAR_results_df <- data.frame(Subset = character(), Both = numeric(), Axicel = numeric(), Bispecific = numeric(), stringsAsFactors = FALSE)
+
+for (subset in list_CAR) {
+
+  wilcox1 <- wilcox.test(patient_summary_CAR[[subset]] ~ patient_summary_CAR$Response_6m)
+  pv1 <- wilcox1$p.value
+  wilcox2 <- wilcox.test(axicel_CAR[[subset]] ~ axicel_CAR$Response_6m)
+  pv2 <- wilcox2$p.value
+  wilcox3 <- wilcox.test(bispecific_CAR[[subset]] ~ bispecific_CAR$Response_6m)
+  pv3 <- wilcox3$p.value
+  
+  counts <- patient_summary_CAR %>%
+    group_by(Response_6m) %>%
+    summarise(count = n())
+  
+  labels <- c("DR (n=7)", "NDR (n=7)")
+  patient_summary_CAR$Response_6m <- factor(patient_summary_CAR$Response_6m, levels = c("DR", "NDR"))
+  
+  p <- ggplot(patient_summary_CAR, aes_string(x = "Response_6m", y = subset, fill = "Response_6m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels1 <- c("DR (n=3)", "NDR (n=4)")
+  axicel_CAR$Response_6m <- factor(axicel_CAR$Response_6m, levels = c("DR", "NDR"))
+  
+  p1 <- ggplot(axicel_CAR, aes_string(x = "Response_6m", y = subset, fill = "Response_6m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels1) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels2 <- c("DR (n=4)", "NDR (n=3)")
+  bispecific_CAR$Response_6m <- factor(bispecific_CAR$Response_6m, levels = c("DR", "NDR"))
+  
+  p2 <- ggplot(bispecific_CAR, aes_string(x = "Response_6m", y = subset, fill = "Response_6m")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels2) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  name <- sub("Percent_", "", subset)
+  ggsave(paste0("Boxplot2.0/CAR+/6m/", name, "-response6m.eps"), p, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/CAR+/6m/", name, "-Axicel-response6m.eps"), p1, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0("Boxplot2.0/CAR+/6m/", name,"-Bispecific-response6m.eps"), p2, dpi=600, width = 2.5, height=4.5, bg = "white")
+  
+  new_row <- data.frame(Subset = name, Both = pv1, Axicel = pv2, Bispecific = pv3)
+  CAR_results_df <- rbind(CAR_results_df, new_row)
+}
+
+write.csv(CAR_results_df, file= "Boxplot2.0/FNA-CAR-6m-P_values.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
+
+
+```{r}
+patient_summary_CAR
+```
+
+
+
+# Clinical covariates
+```{r}
+#High_LDH, Pre_LD_LDH, Max_CRS, Max_ICANS
+wilcox1 <- wilcox.test(patient_summary_CAR[["Percent_CART"]] ~ patient_summary_CAR$Max_ICANS)
+  pv1 <- wilcox1$p.value
+  wilcox2 <- wilcox.test(axicel_CAR[["Percent_CART"]] ~ axicel_CAR$Max_ICANS)
+  pv2 <- wilcox2$p.value
+  wilcox3 <- wilcox.test(bispecific_CAR[["Percent_CART"]] ~ bispecific_CAR$Max_ICANS)
+  pv3 <- wilcox3$p.value
+  
+  counts <- patient_summary_CAR %>%
+    group_by(Max_ICANS) %>%
+    summarise(count = n())
+  
+  labels <- c("0-1 (n=X)", "2-4 (n=X)")
+  patient_summary_CAR$Max_ICANS <- factor(patient_summary_CAR$Max_ICANS, levels = c("0-1", "2-4"))
+  
+  p <- ggplot(patient_summary_CAR, aes_string(x = "Max_ICANS", y = "Percent_CART", fill = "Max_ICANS")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels1 <- c("TRUE (n=4)", "FALSE (n=3)")
+  axicel_CAR$Max_ICANS <- factor(axicel_CAR$Max_ICANS, levels = c("0-1", "2-4"))
+  
+  p1 <- ggplot(axicel_CAR, aes_string(x = "Max_ICANS", y = "Percent_CART", fill = "Max_ICANS")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels1) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  
+  labels2 <- c("TRUE (n=5)", "FALSE (n=2)")
+  bispecific_CAR$Max_ICANS <- factor(bispecific_CAR$Max_ICANS, levels = c("0-1", "2-4"))
+  
+  p2 <- ggplot(bispecific_CAR, aes_string(x = "Max_ICANS", y = "Percent_CART", fill = "High_LDH")) +
+    geom_boxplot(outlier.shape = NA, lwd = 0.7, size=0.05) + 
+    geom_point(aes(shape = construct), position = position_jitter(width = 0.2), size = 2, show.legend=FALSE) +
+    scale_shape_manual(values = c(16, 17)) +
+    scale_fill_manual(values = c("#0000fc", "#fc0001"), labels=labels2) + 
+    labs(x = "Response", y = "XXXX (%)", fill = "") +
+    theme_minimal() + 
+    theme(
+      plot.title = element_text(size = 20, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 16, face = "bold"),
+      axis.text = element_text(size = 12),
+      legend.position = "top",
+      panel.border = element_rect(colour = "black", fill=NA, size=1),
+      panel.grid.major = element_line(size = 0.1),  
+      panel.grid.minor = element_line(size = 0.1))
+  
+  name <- "CART"
+  ggsave(paste0(name, "-Max_ICANS.eps"), p, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0(name, "-Axicel-Max_ICANS.eps"), p1, dpi=600, width = 2.5, height=4.5, bg = "white")
+  ggsave(paste0(name,"-Bispecific-Max_ICANS.eps"), p2, dpi=600, width = 2.5, height=4.5, bg = "white")
+  
+  print(pv1)
+  print(pv2)
+  print(pv3)
+```
+
+
+
+
+
+
+
+
+
+
