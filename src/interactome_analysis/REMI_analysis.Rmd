@@ -1,0 +1,491 @@
+---
+title: "Untitled"
+author: "Kelvin Mo"
+date: "2024-04-15"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+rm(list = ls())
+gc()
+```
+
+```{r}
+getwd()
+remi_30d <-  readRDS("Interactome-Results/REMI/20240414_30d_remi_output.rds")
+remi_3m <- readRDS("Interactome-Results/REMI/20240414_3m_remi_output.rds")
+remi_6m <- readRDS("Interactome-Results/REMI/20240414_6m_remi_output.rds")
+
+remi_30d_cr <- remi_30d$CR$interactome
+remi_30d_pd <- remi_30d$PD$interactome
+remi_3m_cr <- remi_3m$CR$interactome
+remi_3m_pd <- remi_3m$PD$interactome
+remi_6m_cr <- remi_6m$CR$interactome
+remi_6m_pd <- remi_6m$PD$interactome
+
+head(remi_30d_cr)
+```
+
+```{r}
+gene <- "CSF1R"
+cell <- "Myeloid DC" # B cell
+df <- remi_30d_cr[
+  (remi_30d_cr$ligand == gene & remi_30d_cr$sending == cell) |
+  (remi_30d_cr$receptor == gene & remi_30d_cr$receiving == cell), ]
+head(df)
+# CR 30 days
+```
+
+
+```{r}
+df <- remi_30d_pd[
+  (remi_30d_pd$ligand == gene & remi_30d_pd$sending == cell) |
+  (remi_30d_pd$receptor == gene & remi_30d_pd$receiving == cell), ]
+head(df)
+# PD 30 days
+```
+
+
+```{r}
+df <- remi_3m_cr[
+  (remi_3m_cr$ligand == gene & remi_3m_cr$sending == cell) |
+  (remi_3m_cr$receptor == gene & remi_3m_cr$receiving == cell), ]
+head(df)
+# CR 3 months
+```
+
+
+```{r}
+
+df <- remi_3m_pd[
+  (remi_3m_pd$ligand == gene & remi_3m_pd$sending == cell) |
+  (remi_3m_pd$receptor == gene & remi_3m_pd$receiving == cell), ]
+head(df)
+# PD 3 months
+```
+
+```{r}
+df <- remi_6m_cr[
+  (remi_6m_cr$ligand == gene & remi_6m_cr$sending == cell) |
+  (remi_6m_cr$receptor == gene & remi_6m_cr$receiving == cell), ]
+head(df)
+# CR 6 months
+```
+
+
+```{r}
+df <- remi_6m_pd[
+  (remi_6m_pd$ligand == gene & remi_6m_pd$sending == cell) |
+  (remi_6m_pd$receptor == gene & remi_6m_pd$receiving == cell), ]
+head(df)
+# PD 6 months
+```
+
+
+# CCL13
+```{r}
+df <- remi_30d_cr[ remi_30d_cr$ligand == gene | remi_30d_cr$receptor == gene, ]
+head(df)
+```
+
+
+```{r}
+library(circlize)
+head(df)
+df <- df %>% filter(weight > 0 )
+df
+```
+
+
+# PLOTS
+```{r}
+library(remi) 
+library(RColorBrewer)
+library(dplyr)
+grid.col <- c("#bdbdbd", "#016300", "#0000FC", "#FC0001")
+cells <- unique(remi_3m$CR$unfilteredinteractome$n1cell)
+cells[order(cells)]
+names(grid.col) <- cells[order(cells)]
+```
+
+```{r}
+png("REMI_CR3m_Chord.png", width = 8, height = 5, units = "in", res = 800)
+df <- remi_3m$CR$interactome %>% select(sending, receiving, ligand) %>% group_by(sending, receiving) %>% summarize(length(ligand))
+p <- circlize::chordDiagram(df, grid.col = grid.col, directional = 1, direction.type = c("arrows", "diffHeight"), annotationTrack = c("grid", "name"))
+legend("topright", legend = names(grid.col), fill = grid.col, border = NA, bty = "n", inset=c(-0.05,0))
+dev.off()
+
+head(df)
+
+# Looking at the number of sending and receiving
+a <- remi_30d$CR$interactome %>%
+  distinct(receptor, receiving, .keep_all = TRUE)
+a
+
+remi_30d$PD$interactome
+df
+```
+
+
+
+```{r}
+library(ggplot2)
+library(ggalluvial)
+
+# Assuming 'df' is your dataframe
+df <- data.frame(
+  ligand = c("ICAM1", "ICAM3", "ICAM3", "ICAM2", "ICAM3", "ICAM3"),
+  receptor = c("IL2RG", "ITGB2", "ITGAL", "ITGAL", "ITGB2", "ITGB2"),
+  sending = c("B cell", "Tcon", "Tcon", "Treg", "Treg", "Tcon"),
+  receiving = c("B cell", "B cell", "Treg", "Treg", "B cell", "Tcon"),
+  weight = c(0.21, 0.35, 0.35, 0.19, 0.43, 0.15)
+)
+
+# Create a color palette
+colors <- c("B cell" = "steelblue", "Tcon" = "darkorange", "Treg" = "seagreen3")
+
+# Create the plot
+gg <- ggplot(df, aes(axis1 = sending, axis2 = ligand, axis3 = receptor, axis4 = receiving, y = weight)) +
+  geom_alluvium(aes(fill = sending)) +
+  geom_stratum() +
+  geom_text(stat = "stratum", aes(label = after_stat(stratum)), size = 3) +
+  scale_fill_manual(values = colors) +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  ggtitle("Alluvial plot of Cell Type Interactions")
+
+# Print the plot
+gg
+```
+
+```{r}
+library(dplyr)
+library(circlize)
+
+# I assume 'remi_30d$CR$interactome' is your original dataframe.
+# Filter to include only certain ligands and receptors, and interactions with weight > 0
+df <- remi_30d$CR$interactome %>% 
+  filter(ligand == "ITGB2" | receptor == "ITGB2" | 
+         ligand == "ITGB1" | receptor == "ITGB1" | 
+         ligand == "ICAM1" | receptor == "ICAM1" | 
+         ligand == "ICAM2" | receptor == "ICAM2" | 
+         ligand == "ICAM3" | receptor == "ICAM3") %>%
+  filter(weight > 0)
+
+# Create a color mapping for the sending and receiving cell types
+cell_types <- unique(c(df$sending, df$receiving))
+colors <- setNames(rainbow(length(cell_types)), cell_types)
+
+# Create a new column that contains colors based on sending and receiving cell types
+df$color <- ifelse(df$sending == df$receiving, 
+                   colors[df$sending], 
+                   paste0(colors[df$sending], "-", colors[df$receiving]))
+
+# Generate a color mapping for ligand/receptor pairs based on sending/receiving
+# This assumes the ligand-receptor pair defines the sector
+unique_pairs <- unique(df[c("ligand", "receptor")])
+pair_colors <- sapply(1:nrow(unique_pairs), function(i) {
+  pair <- unique_pairs[i, ]
+  send_color <- df$color[df$ligand == pair$ligand & df$receptor == pair$receptor & df$sending == df$receiving]
+  if(length(send_color) == 0) {  # In case there's no matching sending == receiving
+    send_color <- "grey"  # Fallback color
+  }
+  return(send_color)
+})
+names(pair_colors) <- apply(unique_pairs, 1, paste, collapse = "-")
+
+# Now plot the chord diagram
+png("REMI_CR30d_Chord.png", width = 8, height = 5, units = "in", res = 500)
+chordDiagram(
+  df, 
+  grid.col = pair_colors, 
+  directional = 1,
+  direction.type = c("arrows", "diffHeight"), 
+  annotationTrack = c("grid", "name")
+)
+# Add legend
+legend(
+  "topright", 
+  legend = names(colors), 
+  fill = colors, 
+  border = NA, 
+  bty = "n", 
+  inset = c(-0.05, 0)
+)
+dev.off()
+
+```
+
+# ITGB2 CIRCO PLOT
+```{r}
+library(dplyr)
+library(circlize)
+
+# First, ensure that your dataframe is loaded properly
+# df <- remi_30d$CR$interactome or read it from a CSV or another file if necessary
+
+# Filter and mutate to create a unique identifier for each ligand-receptor-cell type combination
+df <- remi_3m_pd %>%
+  filter(
+    ligand %in% c("ITGB2", "ITGB1", "ICAM1", "ICAM2", "ICAM3") &
+    receptor %in% c("ITGB2", "ITGB1", "ICAM1", "ICAM2", "ICAM3")
+  ) %>%
+  filter(weight > 0) %>%
+  mutate(
+    ligand_combo = paste(ligand, sending, sep = "_"),
+    receptor_combo = paste(receptor, receiving, sep = "_")
+  )
+
+# Define the colors for each cell type
+cell_type_colors <- c("B cell" = "#bdbdbd", "Tcon" = "blue", "Treg" = "red", "Myeloid DC" = "#016300")
+
+# Map the colors to the sending and receiving columns to apply to ligands and receptors
+df$ligand_color <- cell_type_colors[df$sending]
+df$receptor_color <- cell_type_colors[df$receiving]
+
+# Create a unified color mapping for the chord diagram
+color_mapping <- with(df, c(setNames(ligand_color, ligand_combo), setNames(receptor_color, receptor_combo)))
+color_mapping <- color_mapping[!duplicated(names(color_mapping))]
+
+png("ITGB2_PD3m_Chord.png", width = 8, height = 5, units = "in", res = 500)
+# Use circlize to create the chord diagram
+chordDiagram(
+  x = df[, c("ligand_combo", "receptor_combo")],
+  grid.col = color_mapping,
+  directional = 1,
+  direction.type = c("arrows", "diffHeight"),
+  annotationTrack = c("grid", "name")
+)
+
+
+# Create a legend for the cell types
+legend(
+  "topright",
+  legend = names(cell_type_colors),
+  fill = cell_type_colors,
+  border = NA,
+  bty = "n",
+  inset = c(-0.05, 0)
+)
+
+# Close the plotting device
+dev.off()
+
+head(df, 20)
+```
+
+
+# CCL8 CIRCO PLOT
+```{r}
+remi_30d_cr <- remi_30d$CR$unfilteredinteractome
+remi_30d_pd <- remi_30d$PD$unfilteredinteractome
+remi_3m_cr <- remi_3m$CR$unfilteredinteractome
+remi_3m_pd <- remi_3m$PD$unfilteredinteractome
+remi_6m_cr <- remi_6m$CR$unfilteredinteractome
+remi_6m_pd <- remi_6m$PD$unfilteredinteractome
+
+library(dplyr)
+library(circlize)
+
+# First, ensure that your dataframe is loaded properly
+# df <- remi_30d$CR$interactome or read it from a CSV or another file if necessary
+
+# Filter and mutate to create a unique identifier for each ligand-receptor-cell type combination
+df <- remi_6m_pd %>%  # CHANGE
+  filter(
+    ligand %in% c("CCL8", "CCR1", "CCR2", "CCR3", "CCR5") &
+    receptor %in% c("CCL8", "CCR1", "CCR2", "CCR3", "CCR5")
+  ) %>%
+  filter(weight > 0) %>%
+  mutate(
+    ligand_combo = paste(ligand, n1cell, sep = "_"),
+    receptor_combo = paste(receptor, n2cell, sep = "_")
+  )
+
+# Define the colors for each cell type
+cell_type_colors <- c("B cell" = "#A80054", "Tcon" = "blue", "Treg" = "red", "Myeloid DC" = "#5400a8")
+
+# Map the colors to the sending and receiving columns to apply to ligands and receptors
+df$ligand_color <- cell_type_colors[df$n1cell]
+df$receptor_color <- cell_type_colors[df$n2cell]
+
+# Create a unified color mapping for the chord diagram
+color_mapping <- with(df, c(setNames(ligand_color, ligand_combo), setNames(receptor_color, receptor_combo)))
+color_mapping <- color_mapping[!duplicated(names(color_mapping))]
+
+png("CCL8_CR30d_Chord.png", width = 8, height = 5, units = "in", res = 500) #CHANGE
+# Use circlize to create the chord diagram
+chordDiagram(
+  x = df[, c("ligand_combo", "receptor_combo")],
+  grid.col = color_mapping,
+  directional = 1,
+  direction.type = c("arrows", "diffHeight"),
+  annotationTrack = c("grid", "name")
+)
+
+# Create a legend for the cell types
+legend(
+  "topright",
+  legend = names(cell_type_colors),
+  fill = cell_type_colors,
+  border = NA,
+  bty = "n",
+  inset = c(-0.05, 0)
+)
+
+# Close the plotting device
+dev.off()
+
+head(df)
+```
+
+
+
+# CCL8 CIRCO PLOT
+```{r}
+remi_30d_cr <- remi_30d$CR$unfilteredinteractome
+remi_30d_pd <- remi_30d$PD$unfilteredinteractome
+remi_3m_cr <- remi_3m$CR$unfilteredinteractome
+remi_3m_pd <- remi_3m$PD$unfilteredinteractome
+remi_6m_cr <- remi_6m$CR$unfilteredinteractome
+remi_6m_pd <- remi_6m$PD$unfilteredinteractome
+
+library(dplyr)
+library(circlize)
+
+# First, ensure that your dataframe is loaded properly
+# df <- remi_30d$CR$interactome or read it from a CSV or another file if necessary
+
+# Filter and mutate to create a unique identifier for each ligand-receptor-cell type combination
+df <- remi_6m_pd %>%  # CHANGE
+  filter(
+    ligand %in% c("CCL8", "CCR1", "CCR2", "CCR3", "CCR5") &
+    receptor %in% c("CCL8", "CCR1", "CCR2", "CCR3", "CCR5")
+  ) %>%
+  filter(weight > 0) %>%
+  mutate(
+    ligand_combo = paste(ligand, n1cell, sep = "_"),
+    receptor_combo = paste(receptor, n2cell, sep = "_")
+  )
+
+# Define the colors for each cell type
+cell_type_colors <- c("B cell" = "#A80054", "Tcon" = "blue", "Treg" = "red", "Myeloid DC" = "#5400a8")
+
+# Map the colors to the sending and receiving columns to apply to ligands and receptors
+df$ligand_color <- cell_type_colors[df$n1cell]
+df$receptor_color <- cell_type_colors[df$n2cell]
+
+# Create a unified color mapping for the chord diagram
+color_mapping <- with(df, c(setNames(ligand_color, ligand_combo), setNames(receptor_color, receptor_combo)))
+color_mapping <- color_mapping[!duplicated(names(color_mapping))]
+
+png("CCL8_CR30d_Chord.png", width = 8, height = 5, units = "in", res = 500) #CHANGE
+# Use circlize to create the chord diagram
+chordDiagram(
+  x = df[, c("ligand_combo", "receptor_combo")],
+  grid.col = color_mapping,
+  directional = 1,
+  direction.type = c("arrows", "diffHeight"),
+  annotationTrack = c("grid", "name")
+)
+
+# Create a legend for the cell types
+legend(
+  "topright",
+  legend = names(cell_type_colors),
+  fill = cell_type_colors,
+  border = NA,
+  bty = "n",
+  inset = c(-0.05, 0)
+)
+
+# Close the plotting device
+dev.off()
+
+head(df)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Plot the entire interactome - Heatmap
+```{r}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+library(RColorBrewer)
+library(viridis)
+```
+
+
+```{r}
+df <- remi_6m_cr
+
+#df <- subset(df, subset = weight > 0)
+  
+df$ligand_receptor <- paste(df$ligand, df$receptor, sep="_")
+df$sending_receiving <- paste(df$sending, df$receiving, sep="_")
+
+wide_df <- dcast(df, sending_receiving ~ ligand_receptor, value.var = "cor")
+
+melted_df <- melt(wide_df, id.vars = "sending_receiving")
+
+melted_df <- melted_df %>%
+  mutate(value = ifelse(is.na(value) | value == 0, 0, value))
+
+melted_df$value <- as.numeric(melted_df$value)
+
+# Generate heatmap
+ggplot(melted_df, aes(x = sending_receiving, y = variable, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "blue", mid = "white", high = "red",
+    midpoint = 0, limit = c(-0.5, max(melted_df$value, na.rm = TRUE)),
+    na.value = "white",
+    name = "Value") +
+  labs(x = "Sending/Receiving", y = "Ligand/Receptor", title = "Complete Response (6 months)") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),  # Increase font size
+    axis.text.y = element_text(size = 12),  # Increase font size
+    axis.title = element_text(size = 14),  # Increase font size
+    plot.title = element_text(hjust = 0.5, size = 16),  # Increase font size and center align
+    legend.title = element_text(size = 12),  # Increase legend title font size
+    legend.text = element_text(size = 10),  # Increase legend text font size
+    panel.grid = element_blank(),  # Remove grid lines
+    panel.background = element_rect(fill = "white"),  # Set panel background to white
+    plot.background = element_rect(fill = "white")  # Set plot background to white
+  ) +
+  guides(fill = guide_colorbar(barwidth = 0.8, barheight = 6))  # Adjust color bar size
+
+ggsave("REMI_CR6m.png", width = 10, height = 15, dpi = 600, bg = "white")
+```
+
+

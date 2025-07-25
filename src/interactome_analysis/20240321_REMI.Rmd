@@ -1,0 +1,136 @@
+---
+title: "20240321_REMI"
+author: "Kelvin Mo"
+date: "2024-03-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+remi_30d <- readRDS("../20240321_REMI/20240321_30d_remi_output.rds")
+PD_30d
+CR_30d <- remi_30d$CR$interactome
+PD_30d <- remi_30d$PD$interactome
+```
+
+```{r}
+CR_30d <- CR_30d[which(CR_30d$weight > 0.1),]
+CR_30d <- CR_30d[which(CR_30d$cor > 0.8),]
+PD_30d <- PD_30d[which(PD_30d$weight > 0.1),]
+PD_30d <- PD_30d[which(PD_30d$cor > 0.8),]
+```
+
+```{r}
+target <- "CCL8"
+CR_30d[which(CR_30d$ligand == target | CR_30d$receptor == target),]
+```
+
+===============================================================================
+
+```{r}
+remi_3m <- readRDS("../20240321_REMI/20240321_3m_remi_output.rds")
+CR_3m <- remi_3m$CR$interactome
+PD_3m <- remi_3m$PD$interactome
+PD_3m
+```
+
+```{r}
+CR_3m <- CR_3m[which(CR_3m$weight > 0.1),]
+#CR_3m <- CR_3m[which(CR_3m$cor > 0.8),]
+PD_3m <- PD_3m[which(PD_3m$weight > 0.1),]
+#PD_3m <- PD_3m[which(PD_3m$cor > 0.8),]
+```
+
+```{r}
+target <- "CCL8"
+PD_3m <- PD_3m[which(PD_3m$ligand == target | PD_3m$receptor == target),]
+PD_3m
+CR_3m <- CR_3m[which(CR_3m$ligand == target | CR_3m$receptor == target),]
+CR_3m
+```
+
+
+================================================================================
+
+```{r}
+remi_6m <- readRDS("../20240321_REMI/20240321_6m_remi_output.rds")
+CR_6m <- remi_6m$CR$interactome
+PD_6m <- remi_6m$PD$interactome
+PD_6m
+```
+
+```{r}
+CR_6m <- CR_6m[which(CR_6m$weight > 0.1),]
+CR_6m <- CR_6m[which(CR_6m$cor > 0.8),]
+PD_6m <- PD_6m[which(PD_6m$weight > 0.1),]
+PD_6m <- PD_6m[which(PD_6m$cor > 0.8),]
+```
+
+```{r}
+target <- "CCL8"
+PD_6m[which(CR_6m$ligand == target | CR_6m$receptor == target),]
+```
+
+================================================================================
+
+```{r}
+library(dplyr)
+CR_30d %>%
+  group_by(commnum) %>%
+  summarize(paste(unique(c(sending, receiving)), collapse =", "))
+PD_30d %>%
+  group_by(commnum) %>%
+  summarize(paste(unique(c(sending, receiving)), collapse =", "))
+```
+
+```{r}
+write_cytoscape_files <- function(edge_list, filename){
+  cyt <- data.frame(node1 = unlist(apply(edge_list, 1, function(x){
+    cell <- gsub(" ", ".", x[3])
+    paste(c(cell, x[1]), collapse = "_")})),
+    node2 = unlist(apply(edge_list, 1, function(x){
+      cell <- gsub(" ", ".", x[4])
+      paste(c(cell, x[2]), collapse = "_")
+    })),
+    interaction = rep("LR", dim(edge_list)[1]),
+    directed = rep("true", dim(edge_list)[1])
+  )
+  write.csv(cyt, file = paste0(filename, "_edge_list.csv"), row.names = F, quote = F)
+  return(cyt)
+}
+```
+
+```{r}
+write_node_list <- function(cyt, filename){
+  node_list <- data.frame(node = c(cyt$node1, cyt$node2),
+                          cell_type = unlist(lapply(c(cyt$node1, cyt$node2), function(x){strsplit(x, split = "_")[[1]][1]})),
+                          gene = unlist(lapply(c(cyt$node1, cyt$node2), function(x){strsplit(x, split = "_")[[1]][2]})))
+  write.csv(node_list, file = paste0(filename, "_node_list.csv"), row.names = F, quote = F)
+}
+```
+
+```{r}
+cyt.CR <- write_cytoscape_files(CR_3m, "../20220321_CR")
+write_node_list(cyt.CR, "../20220321_CR")
+cyt.PD <- write_cytoscape_files(PD_3m, "../20220321_PD")
+write_node_list(cyt.PD, "../20220321_PD")
+```
+
+```{r}
+# analyze which are different
+cyt.CR <- mutate(cyt.CR, interaction =paste(node1, node2, sep = "-"))
+cyt.PD <- mutate(cyt.PD, interaction =paste(node1, node2, sep = "-"))
+```
+
+```{r}
+cyt.shared <- cyt.CR[which(cyt.CR$interaction %in% cyt.PD$interaction),]
+write.csv(cyt.shared, file = paste0("../20220321_shared_edge_list.csv"), row.names = F, quote = F)
+write_node_list(cyt.shared, "intermediates/20220321_shared")
+```
+
+

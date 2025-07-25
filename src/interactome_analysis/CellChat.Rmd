@@ -1,0 +1,536 @@
+---
+title: "CellChat"
+author: "Kelvin Mo"
+date: "2024-02-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+install.packages('NMF')
+install.packages('devtools')
+devtools::install_github("jokergoo/circlize")
+devtools::install_github("jokergoo/ComplexHeatmap")
+if (!requireNamespace("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+BiocManager::install("BiocNeighbors")
+BiocManager::install("Biobase")
+# pip install umap-learn
+install.packages('devtools')
+BiocManager::install("ComplexHeatmap")
+devtools::install_github("sqjin/CellChat")
+```
+
+
+```{r}
+library(CellChat)
+library(patchwork)
+library(Seurat)
+options(stringsAsFactors = FALSE)
+```
+
+```{r}
+library(future)
+plan(multisession, workers = parallel::detectCores() - 1)
+rm(list = ls())
+gc()
+```
+
+
+# I. Data input & processing and initialization of CellChat object
+```{r}
+# Here we load a scRNA-seq data matrix and its associated cell meta data
+data = readRDS("FNA_InteractomeAnalysis_1.rds")
+head(data)
+dim(data@meta.data)
+```
+
+
+# Data Filtering
+```{r}
+# Response_30d: CR, PR, SD, PD
+# Response_3m: CR, PR, PD 
+# Response_6m: CR, PD
+# df = data
+df = subset(data, subset = (Response_6m == "PD") | (Response_6m == "SD"))
+dim(df@meta.data)
+```
+
+
+```{r}
+# Cut down the "levels" of the Seurat object to align with the subset
+new_levels <- c("B cell", "Myeloid DC", "T cell")
+df$cell_type <- factor(df$cell_type, levels = new_levels)
+
+df.input = GetAssayData(df, assay="RNA", layer="data") #normalized data matrix
+labels <- df@meta.data$cell_type
+meta <- data.frame(labels = labels, row.names = names(labels)) #create a dataframe of the cell labels
+unique(meta$labels)
+
+#meta$labels = droplevels(meta$labels, exclude = setdiff(levels(meta$labels), unique(meta$labels)))
+#levels(meta$labels)
+```
+
+```{r}
+cellchat <- createCellChat(object = df, group.by="cell_type", assay = "RNA")
+```
+
+```{r}
+CellChatDB <- CellChatDB.human
+showDatabaseCategory(CellChatDB)
+```
+
+```{r}
+# Show the structure of the database
+dplyr::glimpse(CellChatDB$interaction)
+
+# Use a subset of CellChatDB for cell-cell communication analysis
+```
+
+
+```{r}
+# CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling") # use Secreted Signaling
+CellChatDB.use <- CellChatDB # simply use the default CellChatDB to use all CellChatDB for cell-cell communication analysis
+# Set the used database in the object
+cellchat@DB <- CellChatDB.use
+unique(CellChatDB$interaction$annotation)
+```
+
+```{r}
+# subset the expression data of signaling genes for saving computation cost
+cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
+future::plan("multisession", workers = 2) # do parallel
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+
+# project gene expression data onto PPI (Optional: when running it, USER should set `raw.use = FALSE` in the function `computeCommunProb()` in order to use the projected data)
+# cellchat <- projectData(cellchat, PPI.human)
+```
+
+# II. Inference of cell-cell communication network
+```{r}
+# computeAveExpr(cellchat, features = c("CXCL12","CXCR4"), type = "truncatedMean", trim = 0.15)
+cellchat <- computeCommunProb(cellchat, type = "truncatedMean", trim=0.10)
+# cellchat <- computeCommunProb(cellchat, type = "triMean")
+# Filter out the cell-cell communication if there are only few number of cells in certain cell groups
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+
+
+```
+
+```{r}
+# Inferred intercellular commnuication is stored in "net" and "netP" as ligand and receptor
+cellchat <- computeCommunProbPathway(cellchat)
+```
+
+```{r}
+# Calculate the aggregated cell-cell communication network
+cellchat <- aggregateNet(cellchat)
+```
+
+
+```{r}
+#plotGeneExpression(cellchat, signaling = "ICAM", enriched.only = TRUE)
+```
+
+
+```{r}
+#groupSize <- as.numeric(table(cellchat@idents))
+#par(mfrow = c(1,2), xpd=TRUE)
+#netVisual_circle(cellchat@net$count, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Number of interactions")
+#netVisual_circle(cellchat@net$weight, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
+```
+
+```{r}
+mat <- cellchat@net$weight
+par(mfrow = c(1,3), xpd=TRUE)
+for (i in 1:nrow(mat)) {
+  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
+  mat2[i, ] <- mat[i, ]
+  netVisual_circle(mat2, vertex.weight = groupSize, weight.scale = T, edge.weight.max = max(mat), title.name = rownames(mat)[i])
+}
+```
+
+# III. Visualization of cell-cell communication network
+```{r}
+# 'CCL', 'FGF', 'LIGHT', 'IL4', 'CD40', 'VEGF', 'CSF', 'GAS', 'GALECTIN', 'TNF', 'MIF', 'CXCL', 'COMPLEMENT'
+pathways.show <- c('ADORA2A') 
+# Hierarchy plot
+# Here we define `vertex.receive` so that the left portion of the hierarchy plot shows signaling to fibroblast and the right portion shows signaling to immune cells 
+vertex.receiver = seq(1,1) # a numeric vector. 
+netVisual_aggregate(cellchat, signaling = pathways.show,  vertex.receiver = vertex.receiver)
+# Circle plot
+par(mfrow=c(1,1))
+netVisual_aggregate(cellchat, signaling = pathways.show, layout = "circle")
+```
+
+```{r}
+# Chord diagram
+par(mfrow = c(1,1))
+netVisual_aggregate(cellchat, signaling = pathways.show, layout = "chord")
+```
+
+```{r}
+# Heatmap
+par(mfrow=c(1,1))
+netVisual_heatmap(cellchat, signaling = pathways.show, color.heatmap = "Reds")
+#> Do heatmap based on a single object
+```
+```{r}
+# Chord diagram
+group.cellType <- c(rep("B cell", 4), rep("T cell", 4), rep("Myeloid DC", 4)) # grouping cell clusters into fibroblast, DC and TC cells
+names(group.cellType) <- levels(cellchat@idents)
+netVisual_chord_cell(cellchat, signaling = pathways.show, group = group.cellType, title.name = paste0(pathways.show, " signaling network"))
+#> Plot the aggregated cell-cell communication network at the signaling pathway level
+```
+
+```{r}
+netAnalysis_contribution(cellchat, signaling = pathways.show)
+```
+
+```{r}
+pairLR.CXCL <- extractEnrichedLR(cellchat, signaling = pathways.show, geneLR.return = FALSE)
+LR.show <- pairLR.CXCL[1,] # show one ligand-receptor pair
+# Hierarchy plot
+vertex.receiver = seq(1,4) # a numeric vector
+netVisual_individual(cellchat, signaling = pathways.show,  pairLR.use = LR.show, vertex.receiver = vertex.receiver)
+#> [[1]]
+# Circle plot
+netVisual_individual(cellchat, signaling = pathways.show, pairLR.use = LR.show, layout = "circle")
+```
+```{r}
+# Chord diagram
+netVisual_individual(cellchat, signaling = pathways.show, pairLR.use = LR.show, layout = "chord")
+```
+
+```{r}
+# Access all the signaling pathways showing significant communications
+# pathways.show.all <- cellchat@netP$pathways
+# check the order of cell identity to set suitable vertex.receiver
+# levels(cellchat@idents)
+# vertex.receiver = seq(1,3)
+# for (i in 1:length(pathways.show.all)) {
+  # Visualize communication network associated with both signaling pathway and individual L-R pairs
+  # netVisual(cellchat, signaling = pathways.show.all[i], vertex.receiver = vertex.receiver, layout = "hierarchy")
+  # Compute and visualize the contribution of each ligand-receptor pair to the overall signaling pathway
+  # gg <- netAnalysis_contribution(cellchat, signaling = pathways.show.all[i])
+  # ggsave(filename=paste0("../CellChat_Results/", pathways.show.all[i], "_L-R_contribution.pdf"), plot=gg, width = 3, height = 2, units = 'in', dpi = 300)
+# }
+```
+
+# IMPORTANTT!!!!!!!
+# Visualize cell-cell communication mediated by multiple LR or signaling pathways
+```{r}
+cellchat <- 
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+p <- netVisual_bubble(cellchat, sources.use = c(1,2,3), targets.use = c(1:3), remove.isolate = FALSE)
+# ggsave("../CellChat_Results/Base_v1.0/Response_6m/Significant_LR.pdf", plot = p, width = 10, height = 14, units = "in")
+print(p)
+#> Comparing communications on a single object
+```
+# IMPORTANT!!!!!!!
+# Returns a data frame consisting of all the inferred cell-cell communications at LR
+```{r}
+#df.net <- subsetCommunication(cellchat)
+#write.csv(df.net, "../CellChat_Results/Base_v1.0/Response_6m/PD_6m.csv", row.names = FALSE)
+```
+
+
+# IMPORTANT!!
+```{r}
+# PATHWAY SPECIFIC
+# show all the significant interactions (L-R pairs) associated with certain signaling pathways
+p <- netVisual_bubble(cellchat, sources.use = c(1,2,3), targets.use = c(1:3), signaling = c("MIF"), remove.isolate = FALSE)
+ggsave("MIF_PD_6M.png", plot = p, width = 8, height = 4, units = "in")
+#> Comparing communications on a single object
+```
+
+```{r}
+# LR SPECIFIC
+# show all the significant interactions (L-R pairs) based on user's input (defined by `pairLR.use`)
+pairLR.use <- extractEnrichedLR(cellchat, signaling = c("KLRB"))
+netVisual_bubble(cellchat, sources.use = c(1,2,3), targets.use = c(1:3), pairLR.use = pairLR.use, remove.isolate = TRUE)
+#> Comparing communications on a single object
+```
+
+```{r}
+# show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+# show all the interactions sending from Inflam.FIB
+# netVisual_chord_gene(cellchat, sources.use = c(1,2,3), targets.use = c(1:3), lab.cex = 0.5,legend.pos.y = 30)
+```
+
+```{r}
+# show all the interactions received by Inflam.DC
+# netVisual_chord_gene(cellchat, sources.use = c(1,2,3), targets.use = c(1:3), legend.pos.x = 15)
+```
+
+```{r}
+# show all the significant interactions (L-R pairs) associated with certain signaling pathways
+# netVisual_chord_gene(cellchat, sources.use = c(1,2,3), targets.use = c(1:3), signaling = c("MIF","GALECTIN"),legend.pos.x = 8)
+```
+
+```{r}
+# show all the significant signaling pathways from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
+# netVisual_chord_gene(cellchat, sources.use = c(1,2,3), targets.use = c(1:3), slot.name = "netP", legend.pos.x = 10)
+```
+
+# Manifold and classification learning analysis of signaling networks 
+```{r}
+# Identifying signaling groups based on functional similarity
+# cellchat <- computeNetSimilarity(cellchat, type = "functional")
+# cellchat <- netEmbedding(cellchat, type = "functional")
+#> Manifold learning of the signaling networks for a single dataset
+# cellchat <- netClustering(cellchat, type = "functional")
+#> Classification learning of the signaling networks for a single dataset
+# Visualization in 2D-space
+# netVisual_embedding(cellchat, type = "functional", label.size = 3.5)
+
+```
+
+
+
+#######################################################
+# USING INTERACTOME ANALYSIS DATASET 2
+# Treg
+# B.cell Tcon Treg Myeloid.DC
+#######################################################
+
+
+
+```{r}
+library(future)
+plan(multisession, workers = parallel::detectCores() - 1)
+rm(list = ls())
+gc()
+
+# Here we load a scRNA-seq data matrix and its associated cell meta data
+data = readRDS("FNA_InteractomeAnalysis_2.rds")
+dim(data@meta.data)
+```
+
+
+```{r}
+# Response_30d: CR, PR, SD, PD
+# Response_3m: CR, PR, PD 
+# Response_6m: CR, PD
+# df = data
+df = subset(data, subset = Response_3m == "CR" | Response_3m == "PR")
+
+new_levels <- c("Tcon", "Myeloid DC", "Treg", "B cell")
+df$cell_type <- factor(df$interactome_group, levels = new_levels)
+
+df.input = GetAssayData(df, assay="SCT", layer="data") #normalized data matrix
+labels <- df@meta.data$interactome_group
+meta <- data.frame(labels = labels, row.names = names(labels)) #create a dataframe of the cell labels
+unique(meta$labels)
+
+cellchat <- createCellChat(object = df, group.by="interactome_group", assay = "RNA")
+CellChatDB <- CellChatDB.human
+unique(cellchat@idents)
+
+# CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling") # use Secreted Signaling
+CellChatDB.use <- CellChatDB # simply use the default CellChatDB to use all CellChatDB for cell-cell communication analysis
+# Set the used database in the object
+cellchat@DB <- CellChatDB.use
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
+future::plan("multisession", workers = 4) # do parallel
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+
+cellchat <- computeCommunProb(cellchat, type = "truncatedMean", trim = 0.15) #0.15
+# cellchat <- computeCommunProb(cellchat, type = "triMean")
+# Filter out the cell-cell communication if there are only few number of cells in certain cell groups
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+
+cellchat <- computeCommunProbPathway(cellchat)
+cellchat <- aggregateNet(cellchat)
+
+# p <- netVisual_bubble(cellchat, sources.use = c(1,2,3,4), targets.use = c(1:4), remove.isolate = FALSE)
+# ggsave("../CellChat_Results/Treg_v2.0/Response_6m/Significant_LR.pdf", plot = p, width = 12, height = 14, units = "in")
+
+#df.net <- subsetCommunication(cellchat)
+#write.csv(df.net, "../CellChat_Results/Treg_v2.0/Response_6m/PD_6m.csv", row.names = FALSE)
+#head(df.net)
+
+#p <- netVisual_bubble(cellchat, sources.use = c(1,2,3,4), targets.use = c(1:4), signaling = c("ITGB2"), remove.isolate = FALSE)
+# ggsave("ITGB2_CR3m_USETHIS.png", plot = p, width = 6, height = 3, units = "in", dpi = 600)
+# p <- netVisual_bubble(cellchat, sources.use = c(1,2,3,4), targets.use = c(1:4), signaling = c("MIF"), remove.isolate = FALSE)
+#ggsave("MIF_PD_6m.png", plot = p, width = 8, height = 4, units = "in")
+
+#p <- netVisual_bubble(cellchat, sources.use = c(1,2,3,4), targets.use = c(1:4), signaling = c("CCL"), remove.isolate = FALSE)
+#p
+#ggsave("CCL8_PD3m_USETHIS.eps", plot = p, width = 6, height = 3.75, units = "in", dpi = 900) # 6, 3.5
+#ggsave("CCL8_PD3m_USETHIS.png", plot = p, width = 6, height = 3.75, units = "in", dpi = 900)
+```
+
+```{r}
+sort(unique(cellchat@DB$interaction$pathway_name))
+```
+
+```{r}
+# OPTION 1: ITGB2, ICAM
+# OPTION 2: CCL
+pathways.show <- c("ITGB2", "ICAM")
+```
+
+
+```{r}
+pairLR.CXCL <- extractEnrichedLR(cellchat, signaling = pathways.show, geneLR.return = FALSE)
+pairLR.CXCL
+LR.show <- pairLR.CXCL[1,]
+vertex.receiver = seq(1,4)
+
+p <- netVisual_individual(cellchat, signaling = pathways.show, pairLR.use = LR.show, vertex.receiver = vertex.receiver, show.legend = FALSE, graphics.init = FALSE, vertex.label.cex = 1.5, color.use = c("#bdbdbd", "#016300", "#0000fc","#fc0001"))
+
+ggsave("CCL8-CCR1_chord.png", plot = p, width = 5, height = 4, dpi = 900)
+
+?netVisual_individual
+```
+
+```{r}
+p <- netAnalysis_contribution(cellchat, signaling = pathways.show)
+p
+ggsave("ITGB2_PD3m_ContributionPlot.eps", p, width = 5.75, height = 4.5, dpi = 600)
+ggsave("ITGB2_PD3m_ContributionPlot.png", p, width = 5.75, height = 4.5, dpi = 600)
+```
+
+
+```{r}
+par(mfrow = c(1,1))
+netVisual_aggregate(cellchat, signaling=pathways.show, layout = "circle", color.use = NULL)
+```
+
+
+# Draw chord diagrams of the entire interactome
+```{r}
+library(dplyr)
+library(circlize)
+
+# Extract significant interactions
+significant_interactions <- subsetCommunication(cellchat, slot.name = "net")
+
+# Convert the data frame into a matrix format suitable for the chord diagram
+#cell_types <- unique(c(significant_interactions$source, significant_interactions$target))
+#interaction_matrix <- matrix(0, nrow = length(cell_types), ncol = length(cell_types))
+#rownames(interaction_matrix) <- cell_types
+#colnames(interaction_matrix) <- cell_types
+
+# Check the structure of the significant_interactions dataframe
+#head(significant_interactions)
+
+# Fill the matrix with interaction weights
+#for (i in 1:nrow(significant_interactions)) {
+    #source <- as.character(significant_interactions$source[i])
+    #target <- as.character(significant_interactions$target[i])
+    #weight <- significant_interactions$weight[i]
+    
+    #interaction_matrix[source, target] <- interaction_matrix[source, target] + 1
+#}
+
+result <- significant_interactions %>%
+  group_by(source, target) %>%
+  summarise(count = n(), .groups = 'drop')
+result
+
+# Generate chord diagram
+grid.col <- c("#bdbdbd", "#016300", "#0000fc", "#fc0001")
+cells <- unique(result$target)
+names(grid.col) <- cells[order(cells)]
+
+
+png("chord_diagram.png", width = 800, height = 800)
+
+# Generate the chord diagram
+circlize::chordDiagram(result, grid.col = grid.col, directional = 1, 
+                       direction.type = c("arrows", "diffHeight"), 
+                       annotationTrack = c("grid", "name"))
+
+# Close the device
+dev.off()
+```
+
+# Look at how many sending/receiving (rows)
+```{r}
+significant_interactions <- subsetCommunication(cellchat, slot.name = "net")
+a <- significant_interactions %>% distinct(source, ligand, .keep_all = TRUE)
+a
+
+significant_interactions
+```
+
+
+
+
+
+#######################################################
+# USING INTERACTOME ANALYSIS DATASET 3
+# Treg
+# CAR+ / CAR -
+# B.cell CAR+ Tcon CAR- Tcon CAR+ Treg CAR- Treg Myeloid.DC
+#######################################################
+
+
+
+```{r}
+library(future)
+plan(multisession, workers = parallel::detectCores() - 1)
+rm(list = ls())
+gc()
+
+# Here we load a scRNA-seq data matrix and its associated cell meta data
+data = readRDS("../FNA_InteractomeAnalysis_3.rds")
+head(data)
+dim(data@meta.data)
+```
+
+
+```{r}
+# Response_30d: CR, PR, SD, PD
+# Response_3m: CR, PR, PD 
+# Response_6m: CR, PD
+# df = data
+df = subset(data, subset = Response_6m == "PD")
+
+new_levels <- c("CAR+ Tcon", "CAR- Tcon", "CAR+ Treg", "CAR- Treg", "Myeloid DC", "B cell")
+df$cell_type <- factor(df$interactome_group2, levels = new_levels)
+
+df.input = GetAssayData(df, assay="RNA", layer="data") #normalized data matrix
+labels <- df@meta.data$interactome_group2
+meta <- data.frame(labels = labels, row.names = names(labels)) #create a dataframe of the cell labels
+unique(meta$labels)
+
+cellchat <- createCellChat(object = df, group.by="interactome_group2", assay = "RNA")
+CellChatDB <- CellChatDB.human
+unique(cellchat@idents)
+
+# CellChatDB.use <- subsetDB(CellChatDB, search = "Secreted Signaling") # use Secreted Signaling
+CellChatDB.use <- CellChatDB # simply use the default CellChatDB to use all CellChatDB for cell-cell communication analysis
+# Set the used database in the object
+cellchat@DB <- CellChatDB.use
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
+future::plan("multisession", workers = 4) # do parallel
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+
+cellchat <- computeCommunProb(cellchat, type = "truncatedMean", trim=0.15)
+# cellchat <- computeCommunProb(cellchat, type = "triMean")
+# Filter out the cell-cell communication if there are only few number of cells in certain cell groups
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+
+cellchat <- computeCommunProbPathway(cellchat)
+
+p <- netVisual_bubble(cellchat, sources.use = c(1,2,3,4,5,6), targets.use = c(1:6), remove.isolate = FALSE)
+ggsave("../CellChat_Results/CAR_v3.0/Response_6m/PD_6m.pdf", plot = p, width = 16, height = 14, units = "in")
+
+df.net <- subsetCommunication(cellchat)
+write.csv(df.net, "../CellChat_Results/CAR_v3.0/Response_6m/PD_6m.csv", row.names = FALSE)
+```
+
+
