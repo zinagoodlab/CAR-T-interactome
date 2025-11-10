@@ -43,9 +43,9 @@ If you use this code or data, please cite:
 ```
 @article{mo2025ccl8ccl13,  
   title={CCL8⁺CCL13⁺ tumor-associated macrophages drive early resistance to CAR T cell therapy in large B cell lymphoma},  
-  author={Mo, Kelvin C and Yeh, Christine Yiwen and Kramer, Anne Marijn and others},  
-  journal={Cancer Cell},  
-  year={2025},  
+  author={Mo, Kelvin C and Kramer, Anne Marijn and others},  
+  journal={TBD},  
+  year={TBD},  
   publisher={Elsevier}  
 }
 ```
@@ -53,7 +53,7 @@ If you use this code or data, please cite:
 **Contact**
 - Lead Contact: Dr. Zinaida Good (zinaida@stanford.edu)
 - Computational Analysis: Kelvin C. Mo
-- Study Design: Dr. Crystal L. Mackall, Dr. David B. Miklos
+- Study Oversight: Dr. Zinaida Good, Dr. Crystal L. Mackall, Dr. David B. Miklos
   
 **Institutional Affiliations**
 - Stanford University School of Medicine
