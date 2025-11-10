@@ -4,6 +4,8 @@
 [![DOI](https://img.shields.io/badge/DOI-pending-blue.svg)](https://doi.org/pending)
 
 Single-cell interactome analysis reveals CCL8⁺CCL13⁺ tumor-associated macrophages as drivers of CAR T cell resistance in large B cell lymphoma. This repository contains computational pipelines for identifying resistance mechanisms through on-treatment single-cell profiling and cross-cohort validation.
+
+This repository contains computational pipelines and analysis code for identifying resistance mechanisms through on-treatment single-cell profiling and cross-cohort validation in CAR T cell therapy for large B cell lymphoma (LBCL).
 <br>
 <br>
 <img width="5244" height="5243" alt="Cancer Cell Graphical Abstract" src="https://github.com/user-attachments/assets/b1397334-068d-4ac9-9178-0c24b7fc129c" />
@@ -15,11 +17,27 @@ We performed the first on-treatment single-cell characterization of the tumor mi
 <img width="3106" height="1125" alt="image" src="https://github.com/user-attachments/assets/8e1e1470-75ba-43e1-ba87-81d72581fb24" />
 <br>
 <br>
-**Key Findings**
-- CCL8⁺CCL13⁺ TAMs are highly proliferative and immunosuppressive, predicting poor outcomes across multiple treatment contexts
-- IRF4/IRF8-driven dysfunction in CAR T cells operates independently of canonical TOX-mediated exhaustion
-- CCL18⁺ TAMs promote immunosuppression via CCR8⁺ regulatory T cells
-- Resistance mechanisms are conserved between CAR T therapy and chemoimmunotherapy
+
+## Key Findings
+
+- **CCL8⁺CCL13⁺ TAMs** are highly proliferative and immunosuppressive, consistently predicting poor outcomes across CAR T therapy and chemoimmunotherapy
+- **IRF4/IRF8-driven dysfunction** in CAR T cells operates independently of canonical TOX-mediated exhaustion pathways
+- **CCL18⁺ TAMs** promote immunosuppression through interactions with CCR8⁺ regulatory T cells
+- Resistance mechanisms are conserved between CAR T cell therapy and conventional chemoimmunotherapy
+- Enhanced prognostic accuracy compared to conventional macrophage markers (CD68⁺ and CD163⁺ TAMs)
+
+## Repository Structure
+```
+CAR-T-interactome/
+├── data/                    # Data processing scripts and references
+├── src/                # Core analysis pipelines
+│   ├── preprocessing/       # Single-cell data QC and normalization
+│   ├── interactome/        # REMI, CellPhoneDB, CellChat analyses
+│   ├── deconvolution/      # CIBERSORTx bulk RNA-seq analysis
+│   └── validation/         # Cross-cohort validation scripts
+├── figures/                 # Figure generation scripts
+└── README.md
+```
   
 **Dataset**
 - Discovery cohort: 18 LBCL patients + 1 B-ALL patient receiving CAR T therapy
